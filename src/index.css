@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-black text-white overflow-hidden;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+.glass-panel {
+  @apply backdrop-blur-lg bg-glass-10 border border-glass-20 rounded-2xl;
+}
+
+.neon-text {
+  text-shadow: 0 0 10px rgba(0, 243, 255, 0.5), 0 0 20px rgba(0, 243, 255, 0.3);
+}
+
+.neon-border {
+  box-shadow: 0 0 10px rgba(188, 19, 254, 0.3);
+}
+
+canvas {
+    display: block;
+}
