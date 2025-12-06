@@ -60,14 +60,40 @@ export const YouTubeService = {
         }
 
         try {
-            const query = `${songTitle} ${artistName}`;
-            const res = await fetch(
-                `${YOUTUBE_API_ENDPOINT}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&order=viewCount&maxResults=1&key=${apiKey}`
+            const cleanTitle = songTitle.replace(/\s*\(.*?\)\s*/g, '').trim();
+            const cleanArtist = artistName.replace(/\s(ft\.|feat\.\|&).*$/i, '').trim();
+
+            // Try 1: Search for official audio (best match)
+            let query = `${cleanTitle} ${cleanArtist} official audio`;
+            let res = await fetch(
+                `${YOUTUBE_API_ENDPOINT}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=5&key=${apiKey}`
             );
-            const data = await res.json();
+            let data = await res.json();
+
+            // Try 2: If no results, try official video
+            if (!data.items || data.items.length === 0) {
+                query = `${cleanTitle} ${cleanArtist} official video`;
+                res = await fetch(
+                    `${YOUTUBE_API_ENDPOINT}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=5&key=${apiKey}`
+                );
+                data = await res.json();
+            }
+
+            // Try 3: If still no results, try without "official"
+            if (!data.items || data.items.length === 0) {
+                query = `${cleanTitle} ${cleanArtist}`;
+                res = await fetch(
+                    `${YOUTUBE_API_ENDPOINT}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=5&key=${apiKey}`
+                );
+                data = await res.json();
+            }
 
             if (data.items && data.items.length > 0) {
-                const videoId = data.items[0].id.videoId;
+                // Prefer videos with "official" in title
+                const officialVideo = data.items.find(item =>
+                    item.snippet.title.toLowerCase().includes('official')
+                );
+                const videoId = (officialVideo || data.items[0]).id.videoId;
                 return `https://www.youtube.com/watch?v=${videoId}`;
             }
 

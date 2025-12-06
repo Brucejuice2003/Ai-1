@@ -78,10 +78,7 @@ const SmartCover = ({ song }) => {
     const [hasError, setHasError] = useState(false);
     const [isVisible, setIsVisible] = useState(false);
     const [isQueued, setIsQueued] = useState(false);
-    const imgRef = useRef();
-
-    // Track visibility in ref for queue cancellation (optimization)
-    const isVisibleRef = useRef(false);
+    const containerRef = useRef(null);
 
     // 2. Intersection Observer (Lazy Load)
     useEffect(() => {
@@ -109,25 +106,34 @@ const SmartCover = ({ song }) => {
                     // But LIFO logic handles priority, so let's just fetch to populate cache.
 
                     try {
-                        const cleanArtist = song.artist.replace(/\s(ft\.|feat\.|&).*$/i, '');
-                        const term = encodeURIComponent(`${song.title} ${cleanArtist}`);
+                        // Try YouTube first (higher quality, better matching)
+                        let artwork = await YouTubeService.getCoverArt(song.title, song.artist);
 
-                        const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=4`);
-                        const data = await res.json();
+                        // Fallback to iTunes if YouTube fails
+                        if (!artwork) {
+                            const cleanArtist = song.artist.replace(/\s(ft\.|feat\.\|&).*$/i, '');
+                            const term = encodeURIComponent(`${song.title} ${cleanArtist}`);
 
-                        if (data.resultCount > 0) {
-                            const match = data.results.find(item =>
-                                item.trackName.toLowerCase().includes(song.title.toLowerCase()) ||
-                                song.title.toLowerCase().includes(item.trackName.toLowerCase())
-                            );
+                            const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=10`);
+                            const data = await res.json();
 
-                            if (match) {
-                                const artwork = match.artworkUrl100?.replace('100x100', '600x600') || match.artworkUrl100;
-                                if (artwork) {
-                                    setSrc(artwork);
-                                    localStorage.setItem(cacheKey, artwork);
+                            if (data.resultCount > 0) {
+                                const match = data.results.find(item =>
+                                    item.trackName.toLowerCase().includes(song.title.toLowerCase()) ||
+                                    song.title.toLowerCase().includes(item.trackName.toLowerCase())
+                                );
+
+                                if (match) {
+                                    artwork = match.artworkUrl100?.replace('100x100', '300x300') || match.artworkUrl100;
                                 }
                             }
+                        }
+
+                        if (artwork) {
+                            setSrc(artwork);
+                            localStorage.setItem(cacheKey, artwork);
+                        } else {
+                            setHasError(true);
                         }
                     } catch (e) {
                         setHasError(true);
@@ -149,27 +155,13 @@ const SmartCover = ({ song }) => {
 
     return (
         <div
-            ref={imgRef}
-            className="relative w-full h-full rounded bg-gray-800 shrink-0 overflow-hidden group cursor-pointer"
+            ref={containerRef}
+            className="relative w-full aspect-square rounded bg-gray-800 shrink-0 overflow-hidden group cursor-pointer"
             onClick={!src ? handleRetry : undefined}
             title={!src ? "Click to retry loading cover" : ""}
         >
-            {src ? (
-                <img
-                    src={src}
-                    alt={song.title}
-                    className={`w-full h-full object-cover transition-opacity duration-500 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
-                    onLoad={() => setIsLoaded(true)}
-                    onError={() => {
-                        setSrc(null);
-                        setHasError(true);
-                        localStorage.removeItem(cacheKey);
-                    }}
-                />
-            ) : null}
-
-            {/* Custom Aesthetic Fallback */}
-            <div className={`absolute inset-0 bg-gradient-to-br ${bgGradient} flex items-center justify-center -z-10`}>
+            {/* Custom Aesthetic Fallback - Always visible as background */}
+            <div className={`absolute inset-0 bg-gradient-to-br ${bgGradient} flex items-center justify-center`}>
                 {isQueued && !src && !hasError ? (
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 ) : (
@@ -179,8 +171,26 @@ const SmartCover = ({ song }) => {
                 )}
             </div>
 
+            {/* Image layer on top */}
+            {src && (
+                <img
+                    src={src}
+                    alt={song.title}
+                    className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+                    onLoad={() => setIsLoaded(true)}
+                    onError={() => {
+                        setSrc(null);
+                        setIsLoaded(false);
+                        setHasError(true);
+                        localStorage.removeItem(cacheKey);
+                    }}
+                    loading="eager"
+                />
+            )}
+
+            {/* Retry overlay */}
             {!src && !isQueued && (
-                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/30 transition-opacity">
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/30 transition-opacity z-10">
                     <p className="text-[8px] text-white font-bold uppercase tracking-wider">Retry</p>
                 </div>
             )}

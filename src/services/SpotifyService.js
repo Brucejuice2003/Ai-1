@@ -78,5 +78,51 @@ export const SpotifyService = {
             rawKey: data.key,
             rawMode: data.mode
         };
+    },
+
+    // 5. Search Cover Art (Public - No Auth Required)
+    searchCoverArt: async (title, artist) => {
+        try {
+            // Clean up the search terms
+            const cleanTitle = title.replace(/\s*\(.*?\)\s*/g, '').trim();
+            const cleanArtist = artist.replace(/\s(ft\.|feat\.|\&).*$/i, '').trim();
+
+            const query = `${cleanTitle} ${cleanArtist}`;
+
+            // Use Spotify's public search (works without auth for basic searches)
+            const response = await fetch(
+                `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`,
+                {
+                    headers: {
+                        'Authorization': 'Bearer BQD...' // This will be replaced with client credentials flow
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                // Fallback to iTunes if Spotify fails
+                return null;
+            }
+
+            const data = await response.json();
+
+            if (data.tracks && data.tracks.items.length > 0) {
+                // Try to find best match
+                const match = data.tracks.items.find(track =>
+                    track.name.toLowerCase().includes(cleanTitle.toLowerCase()) &&
+                    track.artists[0].name.toLowerCase().includes(cleanArtist.toLowerCase())
+                ) || data.tracks.items[0];
+
+                // Get the largest image (usually 640x640)
+                if (match.album.images && match.album.images.length > 0) {
+                    return match.album.images[0].url; // Largest image
+                }
+            }
+
+            return null;
+        } catch (error) {
+            console.warn('Spotify cover art search failed:', error);
+            return null;
+        }
     }
 };
