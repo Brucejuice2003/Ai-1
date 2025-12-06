@@ -118,6 +118,9 @@ export default function ChordDiagram({ chord }) {
                         );
                     } else {
                         // Finger position dot
+                        // Don't draw dot if it's covered by the barre (cleaner visual)
+                        if (barre && fret === barre) return null;
+
                         return (
                             <circle
                                 key={`finger-${stringIndex}`}

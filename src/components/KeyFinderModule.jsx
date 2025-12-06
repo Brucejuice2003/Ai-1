@@ -1,79 +1,189 @@
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Music, Search, AlertCircle, Play, Check, Settings, LogIn, Youtube, Lock, X } from 'lucide-react';
+import { Upload, Music, Search, AlertCircle, Play, Check, Settings, LogIn, Youtube, Lock, X, Wand2 } from 'lucide-react';
 import { useAudio } from '../audio/AudioContext';
 import { searchSongs, getRandomSuggestions } from '../services/SongKeyService'; // Mock
 import { YouTubeService } from '../services/YouTubeService'; // YouTube
 import ChordDiagram from './ChordDiagram';
 import PianoChord from './PianoChord';
-import { addChordsToSong } from '../services/ChordService';
+import { addChordsToSong, transposeProgression } from '../services/ChordService';
 
 // --- SMART COVER COMPONENT ---
 // Automatically finds the correct cover art from iTunes (free/public) 
 // if the local one is missing or fails heavily.
+// --- GLOBAL REQUEST QUEUE (LIFO) ---
+// Prevents "thundering herd" and prioritizes what user is looking at NOW.
+const coverQueue = [];
+let queueProcessing = false;
+
+const processQueue = async () => {
+    if (queueProcessing) return;
+    queueProcessing = true;
+
+    while (coverQueue.length > 0) {
+        // LIFO: Take from END (most recently added = currently on screen)
+        const task = coverQueue.pop();
+
+        // Check if task is still valid (could add cancellation logic here if needed)
+        // For now, simpler is better. Just run it.
+        await task.run();
+
+        // Wait 300ms before next request to be kind to iTunes API
+        await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    queueProcessing = false;
+};
+
+const enqueueCoverFetch = (task) => {
+    // Add to end
+    coverQueue.push(task);
+    processQueue();
+};
+
+// --- DETERMINISTIC FALLBACK HELPERS ---
+const gradients = [
+    'from-pink-500 to-rose-600',
+    'from-purple-600 to-indigo-600',
+    'from-cyan-500 to-blue-600',
+    'from-emerald-500 to-teal-600',
+    'from-orange-500 to-red-600',
+    'from-fuchsia-600 to-purple-600',
+    'from-blue-600 to-indigo-700'
+];
+
+const getGradient = (str) => {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    return gradients[Math.abs(hash) % gradients.length];
+};
+
+const getInitials = (title) => {
+    return title
+        .split(' ')
+        .map(word => word[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+};
+
+// --- SMART COVER COMPONENT ---
 const SmartCover = ({ song }) => {
-    const [src, setSrc] = useState(song.cover);
+    // 1. Try to get from Cache First
+    const cacheKey = `cover_${song.artist}_${song.title}`;
+    const [src, setSrc] = useState(() => {
+        return localStorage.getItem(cacheKey) || song.cover;
+    });
+
     const [isLoaded, setIsLoaded] = useState(false);
     const [hasError, setHasError] = useState(false);
+    const [isVisible, setIsVisible] = useState(false);
+    const [isQueued, setIsQueued] = useState(false);
+    const imgRef = useRef();
 
+    // Track visibility in ref for queue cancellation (optimization)
+    const isVisibleRef = useRef(false);
+
+    // 2. Intersection Observer (Lazy Load)
     useEffect(() => {
-        // If we already have a specialized iTunes URL or stable URL, use it
-        // Or if we failed before, try to fetch
-        if (!src || hasError) {
-            // Maybe we want to try fetching immediately if it's a "demo" song to ensure high quality?
-            // Let's just try fetching for ALL demo songs to be sure we get the "Right" art.
-        }
-    }, [song, hasError]);
+        const observer = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting) {
+                setIsVisible(true);
+                isVisibleRef.current = true;
+                observer.disconnect();
+            }
+        });
+        if (imgRef.current) observer.observe(imgRef.current);
+        return () => observer.disconnect();
+    }, []);
 
-    // Initial load check
+    // 3. Queue Fetch if Visible & No Source
     useEffect(() => {
-        const fetchItunesCover = async () => {
-            try {
-                // Search iTunes for exact "Song + Artist" match for better accuracy
-                const term = encodeURIComponent(`${song.title} ${song.artist}`);
-                const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=1`);
-                const data = await res.json();
+        if (isVisible && song.isDemo && !src && !hasError && !isQueued) {
+            setIsQueued(true);
 
-                if (data.resultCount > 0) {
-                    // Verify the result matches our song (case-insensitive)
-                    const result = data.results[0];
-                    const titleMatch = result.trackName.toLowerCase().includes(song.title.toLowerCase()) ||
-                        song.title.toLowerCase().includes(result.trackName.toLowerCase());
-                    const artistMatch = result.artistName.toLowerCase().includes(song.artist.toLowerCase()) ||
-                        song.artist.toLowerCase().includes(result.artistName.toLowerCase());
+            enqueueCoverFetch({
+                run: async () => {
+                    // Double check before network call
+                    if (localStorage.getItem(cacheKey)) return;
+                    // Optimization: If user scrolled away really fast, maybe skip?
+                    // But LIFO logic handles priority, so let's just fetch to populate cache.
 
-                    if (titleMatch && artistMatch) {
-                        // Get 100x100 and upgrade to 600x600 for quality
-                        let artwork = result.artworkUrl100?.replace('100x100', '600x600') || result.artworkUrl100;
-                        setSrc(artwork);
+                    try {
+                        const cleanArtist = song.artist.replace(/\s(ft\.|feat\.|&).*$/i, '');
+                        const term = encodeURIComponent(`${song.title} ${cleanArtist}`);
+
+                        const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=song&limit=4`);
+                        const data = await res.json();
+
+                        if (data.resultCount > 0) {
+                            const match = data.results.find(item =>
+                                item.trackName.toLowerCase().includes(song.title.toLowerCase()) ||
+                                song.title.toLowerCase().includes(item.trackName.toLowerCase())
+                            );
+
+                            if (match) {
+                                const artwork = match.artworkUrl100?.replace('100x100', '600x600') || match.artworkUrl100;
+                                if (artwork) {
+                                    setSrc(artwork);
+                                    localStorage.setItem(cacheKey, artwork);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        setHasError(true);
                     }
                 }
-            } catch (e) {
-                // ignore - will show fallback
-            }
-        };
-
-        if (song.isDemo) {
-            // For demo songs, ALWAYS try to get the fresh iTunes cover to ensure it works
-            fetchItunesCover();
+            });
         }
-    }, [song]);
+    }, [isVisible, song, src, hasError, isQueued, cacheKey]);
+
+    const handleRetry = (e) => {
+        e.stopPropagation();
+        setHasError(false);
+        setIsQueued(false); // Allows effect to re-queue
+    };
+
+    // Memoize gradient to prevent flickering
+    const bgGradient = useRef(getGradient(song.title + song.artist)).current;
+    const initials = useRef(getInitials(song.title)).current;
 
     return (
-        <div className="relative w-full h-full rounded bg-gray-800 shrink-0 overflow-hidden">
+        <div
+            ref={imgRef}
+            className="relative w-full h-full rounded bg-gray-800 shrink-0 overflow-hidden group cursor-pointer"
+            onClick={!src ? handleRetry : undefined}
+            title={!src ? "Click to retry loading cover" : ""}
+        >
             {src ? (
                 <img
                     src={src}
                     alt={song.title}
-                    className={`w-full h-full object-cover transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+                    className={`w-full h-full object-cover transition-opacity duration-500 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
                     onLoad={() => setIsLoaded(true)}
-                    onError={() => { setSrc(null); setHasError(true); }}
+                    onError={() => {
+                        setSrc(null);
+                        setHasError(true);
+                        localStorage.removeItem(cacheKey);
+                    }}
                 />
             ) : null}
 
-            {/* Gradient Fallback underneath or if no src */}
-            <div className={`absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-700 flex items-center justify-center text-gray-500 -z-10`}>
-                <Music className="w-8 h-8" />
+            {/* Custom Aesthetic Fallback */}
+            <div className={`absolute inset-0 bg-gradient-to-br ${bgGradient} flex items-center justify-center -z-10`}>
+                {isQueued && !src && !hasError ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ) : (
+                    <span className="text-white/40 font-black text-xs tracking-tighter transform -rotate-6 select-none overlay-text">
+                        {initials}
+                    </span>
+                )}
             </div>
+
+            {!src && !isQueued && (
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-black/30 transition-opacity">
+                    <p className="text-[8px] text-white font-bold uppercase tracking-wider">Retry</p>
+                </div>
+            )}
         </div>
     );
 };
@@ -103,6 +213,49 @@ export default function KeyFinderModule() {
 
     // Instrument toggle for chords
     const [instrument, setInstrument] = useState('guitar'); // 'guitar' or 'piano'
+    const [transposeSteps, setTransposeSteps] = useState(0);
+
+    // Reset transpose when song changes & Auto-Smart Capo
+    useEffect(() => {
+        setTransposeSteps(0);
+
+        // AUTO SMART CAPO: If we have a song, try to find the easiest key immediately
+        // We need to wait a tick for the state to settle? No, we can just calculate it.
+        // But we need the 'findSmartCapo' logic which depends on selectedSong state or arg.
+        // Let's call a helper immediately if selectedSong exists.
+        if (selectedSong && selectedSong.chords && instrument === 'guitar') {
+            const bestStep = calculateSmartCapoStep(selectedSong.chords);
+            if (bestStep !== 0) {
+                setTransposeSteps(bestStep);
+            }
+        }
+    }, [selectedSong, instrument]);
+
+    // Independent helper (moved out or duplicated for effect usage without dependency cycle)
+    const calculateSmartCapoStep = (chords) => {
+        const openRoots = ['C', 'G', 'D', 'A', 'E'];
+        // Try offsets from -5 to +6
+        for (let i = -5; i <= 6; i++) {
+            const testChords = transposeProgression(chords, i);
+            if (!testChords[0]) continue;
+            const firstChordRoot = testChords[0].replace(/m|dim|aug|7|sus.*/, '');
+            // Prefer G or C or D over others
+            if (openRoots.includes(firstChordRoot)) {
+                return i;
+            }
+        }
+        return 0;
+    };
+
+    // Helper to find "easy" guitar key (User Triggered)
+    const findSmartCapo = () => {
+        if (!selectedSong || !selectedSong.chords) return;
+        const bestStep = calculateSmartCapoStep(selectedSong.chords);
+        setTransposeSteps(bestStep);
+    };
+
+    // Compute transposed chords
+    const currentChords = selectedSong ? transposeProgression(selectedSong.chords, transposeSteps) : [];
 
     // Genre filtering
     const [selectedGenre, setSelectedGenre] = useState('All');
@@ -120,6 +273,9 @@ export default function KeyFinderModule() {
         if (selectedGenre !== 'All') {
             demoData = demoData.filter(song => song.genre === selectedGenre);
         }
+
+        // JUST 100 SONGS LIMIT
+        demoData = demoData.slice(0, 100);
 
         setSearchResults(demoData);
     }, [selectedGenre]); // Re-run when genre changes
@@ -175,7 +331,7 @@ export default function KeyFinderModule() {
             let globalResults = [];
             if (query.length > 2) {
                 try {
-                    const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=50`);
+                    const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=100`);
                     const data = await res.json();
                     globalResults = data.results.map(item => ({
                         id: item.trackId,
@@ -228,12 +384,12 @@ export default function KeyFinderModule() {
         <>
             {/* SONG INFO MODAL */}
             {selectedSong && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm animate-fade-in" onClick={() => setSelectedSong(null)}>
-                    <div className="relative max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm animate-fade-in p-4" onClick={() => setSelectedSong(null)}>
+                    <div className="relative max-w-md w-full max-h-[85vh] overflow-y-auto custom-scrollbar rounded-3xl" onClick={(e) => e.stopPropagation()}>
                         {/* Close Button */}
                         <button
                             onClick={() => setSelectedSong(null)}
-                            className="absolute -top-10 right-0 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-all"
+                            className="absolute top-4 right-4 z-50 p-2 rounded-full bg-black/50 hover:bg-black/70 text-white transition-all backdrop-blur-md"
                         >
                             <X className="w-5 h-5" />
                         </button>
@@ -275,35 +431,74 @@ export default function KeyFinderModule() {
                             {/* Chord Progression Section */}
                             {selectedSong.chords && selectedSong.chords.length > 0 && (
                                 <div className="space-y-3">
-                                    {/* Instrument Toggle */}
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-sm font-bold text-gray-300 uppercase">Chord Progression</h3>
-                                        <div className="flex bg-white/5 rounded-lg p-1">
+                                    {/* Instrument Toggle & Transpose */}
+                                    <div className="flex flex-col gap-3">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-bold text-gray-300 uppercase">Chord Progression</h3>
+                                            <div className="flex bg-white/5 rounded-lg p-1">
+                                                <button
+                                                    onClick={() => setInstrument('guitar')}
+                                                    className={`px-3 py-1 text-xs font-bold rounded transition-all ${instrument === 'guitar'
+                                                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                                                        : 'text-gray-400 hover:text-white'
+                                                        }`}
+                                                >
+                                                    🎸 Guitar
+                                                </button>
+                                                <button
+                                                    onClick={() => setInstrument('piano')}
+                                                    className={`px-3 py-1 text-xs font-bold rounded transition-all ${instrument === 'piano'
+                                                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                                                        : 'text-gray-400 hover:text-white'
+                                                        }`}
+                                                >
+                                                    🎹 Piano
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Transpose Controls */}
+                                        <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg">
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => setTransposeSteps(s => s - 1)}
+                                                    className="w-8 h-8 flex items-center justify-center rounded bg-gray-700 hover:bg-gray-600 font-bold"
+                                                >-</button>
+                                                <div className="text-center min-w-[60px]">
+                                                    <div className="text-xs text-gray-400 uppercase">Transpose</div>
+                                                    <div className={`font-bold ${transposeSteps !== 0 ? 'text-neon-blue' : 'text-white'}`}>
+                                                        {transposeSteps > 0 ? `+${transposeSteps}` : transposeSteps}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => setTransposeSteps(s => s + 1)}
+                                                    className="w-8 h-8 flex items-center justify-center rounded bg-gray-700 hover:bg-gray-600 font-bold"
+                                                >+</button>
+                                            </div>
+
+                                            {/* Capo Helper Button */}
                                             <button
-                                                onClick={() => setInstrument('guitar')}
-                                                className={`px-3 py-1 text-xs font-bold rounded transition-all ${instrument === 'guitar'
-                                                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                                                    : 'text-gray-400 hover:text-white'
-                                                    }`}
+                                                onClick={findSmartCapo}
+                                                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 text-xs font-bold hover:shadow-[0_0_15px_rgba(6,182,212,0.4)] transition-all flex items-center gap-2"
                                             >
-                                                🎸 Guitar
-                                            </button>
-                                            <button
-                                                onClick={() => setInstrument('piano')}
-                                                className={`px-3 py-1 text-xs font-bold rounded transition-all ${instrument === 'piano'
-                                                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
-                                                    : 'text-gray-400 hover:text-white'
-                                                    }`}
-                                            >
-                                                🎹 Piano
+                                                ✨ Magic Capo
                                             </button>
                                         </div>
+
+                                        {/* Capo Instruction */}
+                                        {transposeSteps !== 0 && instrument === 'guitar' && (
+                                            <div className="text-center p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-yellow-300 text-sm font-bold animate-pulse">
+                                                {transposeSteps < 0
+                                                    ? `Capo ${Math.abs(transposeSteps)} • Play standard shapes`
+                                                    : `Tune Down ${transposeSteps} semitones (or use chords on higher frets)`}
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Chord Diagrams */}
                                     <div className="grid grid-cols-4 gap-2">
-                                        {selectedSong.chords.map((chord, index) => (
-                                            <div key={index}>
+                                        {currentChords.map((chord, index) => (
+                                            <div key={index + transposeSteps}>
                                                 {instrument === 'guitar' ? (
                                                     <ChordDiagram chord={chord} />
                                                 ) : (

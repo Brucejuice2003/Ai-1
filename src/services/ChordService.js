@@ -72,3 +72,57 @@ export function addChordsToSong(song) {
     // No valid key, return without chords
     return song;
 }
+
+const NOTES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const NOTES_FLAT = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+function getNoteIndex(note) {
+    let n = note.toUpperCase();
+    let idx = NOTES_SHARP.indexOf(n);
+    if (idx !== -1) return idx;
+    return NOTES_FLAT.indexOf(n);
+}
+
+export function transposeChord(chord, semitones) {
+    if (!chord) return chord;
+
+    // Split root from quality (e.g., "Cm" -> "C", "m")
+    // Regex matches the note name (A-G, optional # or b)
+    const match = chord.match(/^([A-G][#b]?)(.*)$/);
+    if (!match) return chord; // fallback
+
+    const root = match[1];
+    const quality = match[2];
+
+    let idx = getNoteIndex(root);
+    if (idx === -1) return chord;
+
+    let newIdx = (idx + semitones) % 12;
+    if (newIdx < 0) newIdx += 12; // Handle negative wrapping
+
+    // Decide whether to return sharp or flat based on direction or just stick to one
+    // For simplicity, we can default to Sharps unless the original was flat?
+    // Let's use a heuristic: if we are transposing down, maybe flats?
+    // Actually, simple lookup is safer. 
+    // Let's default to Sharps for now, or Flats if the target key is typically flat.
+    // Ideally we'd know the target key.
+
+    // Simple approach: Use Flat if original was flat, Sharp if original was sharp or natural?
+    // But Bb + 1 = B (natural).
+    // Let's just pick one set for now. Guitarists often prefer Sharps over Flats except F, Bb, Eb using flat names.
+    // Let's strict map for standard keys.
+    const useFlats = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb'].includes(chord) || root.includes('b');
+
+    // Better logic: If we transposed, just pull from the list that makes sense.
+    // Let's default to the list corresponding to the new root if it's black key?
+    // This is complex to get perfect without Key context.
+    // Let's try to preserve the existing notation style or default to standard guitar keys.
+    const newNote = useFlats ? NOTES_FLAT[newIdx] : NOTES_SHARP[newIdx];
+
+    return newNote + quality;
+}
+
+export function transposeProgression(chords, semitones) {
+    if (!chords) return [];
+    return chords.map(c => transposeChord(c, semitones));
+}
