@@ -21,18 +21,18 @@ export default function Dashboard() {
     } = useAudio();
 
     return (
-        <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center relative overflow-hidden">
+        <div className="min-h-screen text-white p-8 flex flex-col items-center justify-center relative overflow-hidden">
             {/* Background ambient light */}
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-900 rounded-full blur-[150px] opacity-20 pointer-events-none"></div>
 
             <header className="z-10 mb-12 text-center">
-                <h1 className="text-5xl font-bold mb-2 neon-text tracking-tighter">SINGERS DREAMS</h1>
-                <p className="text-gray-400">Professional Voice Analysis & Key Detection</p>
+                <h1 className="text-5xl font-bold mb-2 neon-text tracking-tighter drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">SINGERS DREAMS</h1>
+                <p className="text-gray-200 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">Professional Voice Analysis & Key Detection</p>
             </header>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-6xl z-10">
                 {/* Main Pitch Display */}
-                <div className="glass-panel p-8 flex flex-col items-center justify-center aspect-square md:aspect-auto neon-border transition-all duration-300">
+                <div className="glass-panel p-8 flex flex-col items-center justify-center aspect-square md:aspect-auto hover:shadow-[0_0_40px_rgba(147,51,234,0.4)] transition-all duration-500 hover:scale-[1.02] hover:border-purple-400/50">
                     <div className="text-center mb-6">
                         <h2 className="text-gray-400 uppercase tracking-widest text-sm mb-2">Current Note</h2>
                         <div className={`text-9xl font-bold transition-colors duration-200 ${audioData.voiceTypeColor}`}>
@@ -85,14 +85,14 @@ export default function Dashboard() {
                 <div className="flex flex-col gap-6">
                     {/* Stats Grid */}
                     <div className="grid grid-cols-2 gap-6">
-                        <div className="glass-panel p-6 flex flex-col items-center justify-center">
-                            <Activity className="w-8 h-8 mb-2 text-purple-400" />
-                            <span className="text-gray-400 text-sm uppercase">Voice Type</span>
+                        <div className="glass-panel p-6 flex flex-col items-center justify-center hover:shadow-[0_0_30px_rgba(168,85,247,0.4)] transition-all duration-500 hover:scale-105 group">
+                            <Activity className="w-8 h-8 mb-2 text-purple-400 group-hover:scale-110 transition-transform duration-300" />
+                            <span className="text-gray-400 text-sm uppercase group-hover:text-purple-300 transition-colors">Voice Type</span>
                             <span className={`text-2xl font-bold mt-1 ${audioData.voiceTypeColor}`}>{audioData.voiceType}</span>
                         </div>
-                        <div className="glass-panel p-6 flex flex-col items-center justify-center">
-                            <Music className="w-8 h-8 mb-2 text-cyan-400" />
-                            <span className="text-gray-400 text-sm uppercase">Detailed Key</span>
+                        <div className="glass-panel p-6 flex flex-col items-center justify-center hover:shadow-[0_0_30px_rgba(34,211,238,0.4)] transition-all duration-500 hover:scale-105 group">
+                            <Music className="w-8 h-8 mb-2 text-cyan-400 group-hover:scale-110 transition-transform duration-300" />
+                            <span className="text-gray-400 text-sm uppercase group-hover:text-cyan-300 transition-colors">Detailed Key</span>
                             <span className="text-2xl font-bold mt-1 text-cyan-400">{audioData.estimatedKey}</span>
                         </div>
                     </div>
@@ -194,8 +194,11 @@ export default function Dashboard() {
 
                 <button
                     onClick={isListening ? stopListening : startMic}
-                    className={`flex items-center gap-2 px-8 py-4 rounded-full font-bold text-lg transition-all duration-300 
-                    ${isListening ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_20px_rgba(239,68,68,0.5)]' : 'bg-cyan-500 hover:bg-cyan-600 shadow-[0_0_20px_rgba(6,182,212,0.5)]'}`}
+                    className={`flex items-center gap-3 px-10 py-5 rounded-full font-bold text-lg transition-all duration-500 transform hover:scale-110 active:scale-95
+                    ${isListening
+                            ? 'bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 shadow-[0_0_30px_rgba(239,68,68,0.6)] hover:shadow-[0_0_50px_rgba(239,68,68,0.8)]'
+                            : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-[0_0_30px_rgba(6,182,212,0.6)] hover:shadow-[0_0_50px_rgba(6,182,212,0.8)]'
+                        }`}
                 >
                     <Mic className="w-6 h-6" />
                     {isListening ? "Stop Listening" : "Start Mic"}

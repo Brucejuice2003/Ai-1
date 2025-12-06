@@ -48,5 +48,35 @@ export const YouTubeService = {
             cover: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.default?.url,
             description: item.snippet.description
         }));
+    },
+
+    // Find the most viewed YouTube video for a song
+    getMostViewedVideo: async (songTitle, artistName) => {
+        const apiKey = localStorage.getItem("youtube_api_key");
+
+        if (!apiKey) {
+            // Fallback to search URL if no API key
+            return `https://www.youtube.com/results?search_query=${encodeURIComponent(songTitle + ' ' + artistName)}`;
+        }
+
+        try {
+            const query = `${songTitle} ${artistName}`;
+            const res = await fetch(
+                `${YOUTUBE_API_ENDPOINT}/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&order=viewCount&maxResults=1&key=${apiKey}`
+            );
+            const data = await res.json();
+
+            if (data.items && data.items.length > 0) {
+                const videoId = data.items[0].id.videoId;
+                return `https://www.youtube.com/watch?v=${videoId}`;
+            }
+
+            // Fallback to search if no results
+            return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+        } catch (error) {
+            console.error("YouTube API failed:", error);
+            // Fallback to search URL
+            return `https://www.youtube.com/results?search_query=${encodeURIComponent(songTitle + ' ' + artistName)}`;
+        }
     }
 };
