@@ -1,6 +1,6 @@
 import { useAudio } from '../audio/AudioContext';
 import Visualizer from './Visualizer';
-import { Mic, Upload, Activity, Music } from 'lucide-react';
+import { Mic, Activity, Music } from 'lucide-react';
 import { useRef } from 'react';
 import VibratoGraph from './VibratoGraph';
 
@@ -9,7 +9,6 @@ export default function Dashboard() {
         isListening,
         startMic,
         stopListening,
-        handleFileUpload,
         audioData,
         freqData,
         availableDevices,
@@ -20,7 +19,6 @@ export default function Dashboard() {
         noiseGateThreshold,
         setNoiseGateThreshold
     } = useAudio();
-    const fileInputRef = useRef(null);
 
     return (
         <div className="min-h-screen bg-black text-white p-8 flex flex-col items-center justify-center relative overflow-hidden">
@@ -46,7 +44,7 @@ export default function Dashboard() {
                     </div>
 
                     {/* Cents deviation meter */}
-                    <div className="w-64 h-2 bg-gray-800 rounded-full overflow-hidden mb-4 relative">
+                    <div className="w-64 h-2 bg-gray-800 rounded-full overflow-hidden mb-1 relative">
                         <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10"></div>
                         <div
                             className="h-full transition-all duration-100 ease-linear"
@@ -57,6 +55,28 @@ export default function Dashboard() {
                                 opacity: audioData.note === '-' ? 0 : 1
                             }}
                         ></div>
+                    </div>
+
+                    {/* Ruler / Scale */}
+                    <div className="w-64 h-6 relative mb-4">
+                        {[-50, -25, 0, 25, 50].map((tick) => {
+                            // Calculate Hz for this tick relative to target frequency
+                            const tickHz = audioData.targetFrequency ?
+                                (audioData.targetFrequency * Math.pow(2, tick / 1200)) : 0;
+
+                            return (
+                                <div
+                                    key={tick}
+                                    className="absolute top-0 flex flex-col items-center"
+                                    style={{ left: `${((tick + 50) / 100) * 100}%`, transform: 'translateX(-50%)' }}
+                                >
+                                    <div className="w-0.5 h-1.5 bg-gray-600 mb-1"></div>
+                                    <span className="text-[10px] text-gray-500 font-mono">
+                                        {tickHz > 0 ? Math.round(tickHz) : tick}
+                                    </span>
+                                </div>
+                            );
+                        })}
                     </div>
                     <span className="text-sm text-gray-400">{audioData.cents > 0 ? `+${audioData.cents}` : audioData.cents} cents</span>
                 </div>
@@ -181,22 +201,6 @@ export default function Dashboard() {
                     {isListening ? "Stop Listening" : "Start Mic"}
                 </button>
 
-                <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-8 py-4 rounded-full font-bold text-lg bg-gray-800 hover:bg-gray-700 transition-all duration-300 border border-gray-600"
-                >
-                    <Upload className="w-6 h-6" />
-                    Upload File
-                </button>
-                <input
-                    type="file"
-                    ref={fileInputRef}
-                    className="hidden"
-                    accept="audio/*,video/*"
-                    onChange={(e) => {
-                        if (e.target.files[0]) handleFileUpload(e.target.files[0]);
-                    }}
-                />
             </div>
         </div>
     )

@@ -15,12 +15,15 @@ export function getNoteFromFrequency(frequency) {
     const noteName = NOTE_STRINGS[roundedNote % 12];
     const octave = Math.floor(roundedNote / 12) - 1;
 
+    const targetFrequency = A4_FREQ * Math.pow(2, (roundedNote - 69) / 12);
+
     return {
         name: noteName,
         octave: octave,
         fullName: `${noteName}${octave}`,
         cents: cents,
         frequency: frequency,
+        targetFrequency: targetFrequency,
         midi: roundedNote
     };
 }

@@ -23,6 +23,7 @@ export function AudioProvider({ children }) {
         voiceType: 'Silence',
         voiceTypeColor: 'text-gray-500',
         volume: 0,
+        targetFrequency: 0,
         estimatedKey: '-'
     });
 
@@ -152,6 +153,10 @@ export function AudioProvider({ children }) {
         setIsListening(false);
     };
 
+    // State for stabilizers
+    const voiceTypeBufferRef = useRef({ currentType: 'Silence', bufferLength: 0, candidate: null });
+    const pitchBufferRef = useRef({ lastFreq: 0, stableFreq: 0, frames: 0 });
+
     const updateLoop = () => {
         if (!analyzerRef.current) return;
 
@@ -166,7 +171,7 @@ export function AudioProvider({ children }) {
         setFreqData(new Uint8Array(frequencyData));
 
         // Pitch Detection
-        const frequency = autoCorrelate(timeDomainData, audioCtxRef.current.sampleRate);
+        let frequency = autoCorrelate(timeDomainData, audioCtxRef.current.sampleRate);
         const centroid = getSpectralCentroid(frequencyData, audioCtxRef.current.sampleRate);
 
         let noteInfo = null;
@@ -177,19 +182,71 @@ export function AudioProvider({ children }) {
         for (let i = 0; i < timeDomainData.length; i++) rms += timeDomainData[i] * timeDomainData[i];
         rms = Math.sqrt(rms / timeDomainData.length);
 
-        // Noise Gate: Configurable
-        if (frequency !== -1 && rms > noiseGateThreshold) {
-            noteInfo = getNoteFromFrequency(frequency);
-            if (noteInfo) {
-                voiceTypeData = analyzeVoiceType(frequency, centroid, rms, 'male'); // Default to male for now, make configurable later
-                keyFinderRef.current.processNote(noteInfo.midi % 12);
-                vibratoRef.current.update(frequency, performance.now());
+        // Noise Gate: INCREASED default to avoid random C6 noise (0.01 -> 0.02)
+        // Also reject extremely high frequencies (> 2000Hz) that act as noise in human voice context often
+        if (frequency !== -1 && rms > Math.max(noiseGateThreshold, 0.02) && frequency < 2000) {
+
+            // PITCH SMOOTHING (Simple Low-Pass / Outlier Rejection)
+            // If jump is huge (> 1 octave) in 1 frame, ignore it unless it stays
+            const ratio = frequency / (pitchBufferRef.current.stableFreq || frequency);
+            if (pitchBufferRef.current.stableFreq > 0 && (ratio > 2.2 || ratio < 0.45)) {
+                // Outlier detected? Check if it's sustained
+                pitchBufferRef.current.frames++;
+                if (pitchBufferRef.current.frames < 5) { // Wait 5 frames to confirm new note
+                    frequency = pitchBufferRef.current.stableFreq; // Stick to old
+                } else {
+                    pitchBufferRef.current.stableFreq = frequency; // Accept jump
+                    pitchBufferRef.current.frames = 0;
+                }
+            } else {
+                pitchBufferRef.current.stableFreq = frequency;
+                pitchBufferRef.current.frames = 0;
             }
+
+            noteInfo = getNoteFromFrequency(pitchBufferRef.current.stableFreq);
+
+            if (noteInfo) {
+                // Raw Voice Type Analysis
+                const rawVoiceData = analyzeVoiceType(pitchBufferRef.current.stableFreq, centroid, rms, 'male');
+
+                // VOICE TYPE SMOOTHING (Debounce)
+                // Require 10 frames (approx 160ms) of consistent result to switch type
+                if (rawVoiceData.type !== voiceTypeBufferRef.current.candidate) {
+                    voiceTypeBufferRef.current.candidate = rawVoiceData.type;
+                    voiceTypeBufferRef.current.bufferLength = 0;
+                } else {
+                    voiceTypeBufferRef.current.bufferLength++;
+                }
+
+                if (voiceTypeBufferRef.current.bufferLength > 10) {
+                    voiceTypeBufferRef.current.currentType = rawVoiceData.type;
+                    // Keep color/data synced
+                    voiceTypeData = rawVoiceData;
+                } else {
+                    // Return previous stable type but keep measuring
+                    voiceTypeData = {
+                        ...rawVoiceData,
+                        type: voiceTypeBufferRef.current.currentType,
+                        color: rawVoiceData.color // Allow color to update for feedback? No, keep it stable
+                    };
+                    // Actually, let's just stick to the old textual type to stop flickering
+                    analyzeVoiceType(pitchBufferRef.current.stableFreq, centroid, rms, 'male'); // re-run or just mock?
+                    // Better: Just use the stabilized type string, determining color might be tricky if we don't re-run logic.
+                    // For simplicity, we just use the rawData but OVERRIDE the type name.
+                    voiceTypeData.type = voiceTypeBufferRef.current.currentType;
+                }
+
+                keyFinderRef.current.processNote(noteInfo.midi % 12);
+                vibratoRef.current.update(pitchBufferRef.current.stableFreq, performance.now());
+            }
+        } else {
+            // Silence logic resets buffers?
+            // Maybe not, to allow legato breathing.
+            pitchBufferRef.current.frames = 0;
+            voiceTypeBufferRef.current.bufferLength = 0;
         }
 
         const vibratoStats = vibratoRef.current.analyze();
-
-        // Update Key Estimate every 60 frames (approx 1 sec) roughly, or just every frame (computationally cheap)
         const estimatedKey = keyFinderRef.current.estimateKey();
 
         setAudioData({
@@ -197,6 +254,7 @@ export function AudioProvider({ children }) {
             note: noteInfo ? noteInfo.name + noteInfo.octave : '-',
             cents: noteInfo ? noteInfo.cents : 0,
             exactMidi: noteInfo ? noteInfo.midi + (noteInfo.cents / 100) : null,
+            targetFrequency: noteInfo ? noteInfo.targetFrequency : 0,
             voiceType: voiceTypeData.type,
             voiceTypeColor: voiceTypeData.color,
             volume: rms,

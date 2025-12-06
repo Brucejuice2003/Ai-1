@@ -5,30 +5,33 @@ export default function VibratoGraph({ pitch, isActive }) {
     const historyRef = useRef([]); // Stores { time: number, deviation: number }
     const rafRef = useRef(null);
 
+    const lastDeviationRef = useRef(0);
+
     useEffect(() => {
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
 
         // Configuration
-        const timeWindow = 3000; // Show last 3 seconds
+        const timeWindow = 1500; // Show last 1.5 seconds
+        const smoothingFactor = 0.15; // Lower = smoother, Higher = more responsive
 
         const animate = (now) => {
             const width = canvas.width;
             const height = canvas.height;
 
             // 1. Update Data Loop
-            // We want to record a point EVERY frame, regardless of input, to create a continuous time series.
-
-            let deviation = 0; // Default to flat line (center)
+            let targetDeviation = 0;
 
             if (isActive && pitch !== null) {
-                // Calculate deviation from the nearest semitone
-                // e.g. pitch 60.1 -> deviation 0.1
-                deviation = pitch - Math.round(pitch);
+                targetDeviation = pitch - Math.round(pitch);
             }
-            // If inactive/silence, deviation stays 0 (flat line)
 
-            historyRef.current.push({ time: now, val: deviation });
+            // Apply Low-Pass Filter (Smoothing)
+            // current = prev + (target - prev) * factor
+            const smoothedDeviation = lastDeviationRef.current + (targetDeviation - lastDeviationRef.current) * smoothingFactor;
+            lastDeviationRef.current = smoothedDeviation;
+
+            historyRef.current.push({ time: now, val: smoothedDeviation });
 
             // Prune old data
             const cutoff = now - timeWindow;
@@ -54,12 +57,11 @@ export default function VibratoGraph({ pitch, isActive }) {
             if (historyRef.current.length > 1) {
                 ctx.beginPath();
                 ctx.strokeStyle = '#34d399'; // Green-400
-                ctx.lineWidth = 2.5;
+                ctx.lineWidth = 3.5; // Thicker line
                 ctx.lineJoin = 'round';
 
-                // Scale Y: Full height covers +/- 0.6 semitones roughly?
-                // height/2 = 0.5 semitone deviation
-                const scaleY = height * 0.9;
+                // Scale Y: Amplified to make vibrations taller/easier to see
+                const scaleY = height * 1.5;
 
                 // We map time [now - timeWindow, now] -> [0, width]
                 // X = ((point.time - (now - timeWindow)) / timeWindow) * width
