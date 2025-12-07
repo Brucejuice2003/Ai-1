@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { autoCorrelate, getNoteFromFrequency, getSpectralCentroid, detectBPM, detectPitchRange, getVoiceTypesFromRange } from './utils';
-import { analyzeVoiceType } from './VoiceTypeAnalyzer';
-import { KeyFinder, detectKeyFromBuffer } from './KeyFinder';
+import React, { createContext, useContext, useRef, useState, useEffect } from 'react';
+import { autoCorrelate, getNoteFromFrequency, getSpectralCentroid, detectBPM } from './utils'; // Removed legacy imports
+
+import { KeyFinder } from './KeyFinder'; // Kept for mic usage if any, or remove? Keeping for safety
 import { VibratoDetector } from './VibratoDetector';
 
 const AudioContextState = createContext(null);
@@ -13,13 +13,27 @@ export function AudioProvider({ children }) {
     const [selectedDeviceId, setSelectedDeviceId] = useState('default');
 
     // Audio Settings
+    const [inputGain, setInputGain] = useState(1.0);
+    const [noiseGateThreshold, setNoiseGateThreshold] = useState(0.01);
+
+    const [audioData, setAudioData] = useState({
+        frequency: 0,
+        note: '-',
+        cents: 0,
+        voiceType: 'Silence',
+        voiceTypeColor: 'text-gray-500',
+        volume: 0,
+        targetFrequency: 0,
+
+    });
+    const audioCtxRef = useRef(null);
+    const analyzerRef = useRef(null);
+    const gainNodeRef = useRef(null);
+    const sourceRef = useRef(null);
     const rafIdRef = useRef(null);
     const keyFinderRef = useRef(new KeyFinder());
     const vibratoRef = useRef(new VibratoDetector());
-    const bpmRef = useRef(0);
-    const rangeRef = useRef(null);
-    const voiceTypesRef = useRef([]);
-    const keyRef = useRef(null); // Static key for files
+
 
     // For visualizer
     const [freqData, setFreqData] = useState(new Uint8Array(0));
@@ -78,6 +92,7 @@ export function AudioProvider({ children }) {
                 };
                 const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
                 sourceRef.current = audioCtxRef.current.createMediaStreamSource(stream);
+                sourceRef.current = audioCtxRef.current.createMediaStreamSource(stream);
                 initAudio();
             } catch (fatalErr) {
                 console.error("Microphone access denied completely", fatalErr);
@@ -93,8 +108,10 @@ export function AudioProvider({ children }) {
 
         setSourceType('mic');
         setIsListening(true);
+        // Legacy reset
         keyFinderRef.current.reset();
         vibratoRef.current.reset();
+
         updateLoop();
     };
 
@@ -105,59 +122,15 @@ export function AudioProvider({ children }) {
         }
     }, [inputGain]);
 
-    const handleFileUpload = async (file) => {
-        stopListening();
 
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-        analyzerRef.current = audioCtxRef.current.createAnalyser();
-        analyzerRef.current.fftSize = 2048;
-
-        const arrayBuffer = await file.arrayBuffer();
-        const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
-
-        sourceRef.current = audioCtxRef.current.createBufferSource();
-        sourceRef.current.buffer = audioBuffer;
-
-        // Create a silent gain node (volume = 0) to allow processing without audio output
-        const silentGain = audioCtxRef.current.createGain();
-        silentGain.gain.value = 0; // Mute the audio
-
-        sourceRef.current.connect(analyzerRef.current);
-        analyzerRef.current.connect(silentGain);
-        silentGain.connect(audioCtxRef.current.destination); // Connect to speakers but muted
-
-        sourceRef.current.start(0);
-        setSourceType('file');
-        setIsListening(true);
-        keyFinderRef.current.reset();
-        vibratoRef.current.reset();
-        bpmRef.current = 0;
-        rangeRef.current = null;
-        voiceTypesRef.current = [];
-        keyRef.current = null;
-
-        // Calculate Static Key
-        keyRef.current = detectKeyFromBuffer(audioBuffer);
-
-        // Calculate BPM async
-        detectBPM(audioBuffer).then(bpm => {
-            bpmRef.current = bpm;
-        });
-
-        // Calculate Pitch Range Sync (it's fast enough or allows async? It's synchronous loop)
-        // We can run it here
-        const range = detectPitchRange(audioBuffer);
-        if (range) {
-            rangeRef.current = range;
-            voiceTypesRef.current = getVoiceTypesFromRange(range.minFreq, range.maxFreq);
-        }
-
-        sourceRef.current.onended = () => setIsListening(false);
-        updateLoop();
-    };
 
     const stopListening = () => {
         if (sourceRef.current) {
+            // STOP TRACKS to remove Red Dot
+            if (sourceRef.current.mediaStream) {
+                sourceRef.current.mediaStream.getTracks().forEach(track => track.stop());
+            }
+
             try { sourceRef.current.stop(); } catch (e) { /* ignore */ }
             sourceRef.current.disconnect();
         }
@@ -191,96 +164,50 @@ export function AudioProvider({ children }) {
 
         // Calculate Volume (RMS)
         let rms = 0;
-        for (let i = 0; i < timeDomainData.length; i++) rms += timeDomainData[i] * timeDomainData[i];
+        for (let i = 0; i < timeDomainData.length; i++) {
+            rms += timeDomainData[i] * timeDomainData[i];
+        }
         rms = Math.sqrt(rms / timeDomainData.length);
 
-        // Noise Gate: INCREASED default to avoid random C6 noise (0.01 -> 0.02)
-        // Also reject extremely high frequencies (> 2000Hz) that act as noise in human voice context often
-        if (frequency !== -1 && rms > Math.max(noiseGateThreshold, 0.02) && frequency < 2000) {
+        const SILENCE_THRESHOLD = noiseGateThreshold; // Use user setting
 
-            // PITCH SMOOTHING (Simple Low-Pass / Outlier Rejection)
-            // If jump is huge (> 1 octave) in 1 frame, ignore it unless it stays
-            const ratio = frequency / (pitchBufferRef.current.stableFreq || frequency);
-            if (pitchBufferRef.current.stableFreq > 0 && (ratio > 2.2 || ratio < 0.45)) {
-                // Outlier detected? Check if it's sustained
+        if (rms > SILENCE_THRESHOLD && frequency !== -1 && frequency > 60 && frequency < 1400) {
+            noteInfo = getNoteFromFrequency(frequency);
+
+            // --- VIBRATO DETECTION ---
+            vibratoRef.current.update(frequency, Date.now() / 1000);
+
+            // Note Stabilization
+            if (Math.abs(frequency - pitchBufferRef.current.lastFreq) < 2) {
                 pitchBufferRef.current.frames++;
-                if (pitchBufferRef.current.frames < 5) { // Wait 5 frames to confirm new note
-                    frequency = pitchBufferRef.current.stableFreq; // Stick to old
-                } else {
-                    pitchBufferRef.current.stableFreq = frequency; // Accept jump
-                    pitchBufferRef.current.frames = 0;
+                if (pitchBufferRef.current.frames > 3) {
+                    pitchBufferRef.current.stableFreq = frequency;
                 }
             } else {
-                pitchBufferRef.current.stableFreq = frequency;
                 pitchBufferRef.current.frames = 0;
-            }
-
-            noteInfo = getNoteFromFrequency(pitchBufferRef.current.stableFreq);
-
-            if (noteInfo) {
-                // Raw Voice Type Analysis
-                const rawVoiceData = analyzeVoiceType(pitchBufferRef.current.stableFreq, centroid, rms, 'male');
-
-                // VOICE TYPE SMOOTHING (Debounce)
-                // Require 10 frames (approx 160ms) of consistent result to switch type
-                if (rawVoiceData.type !== voiceTypeBufferRef.current.candidate) {
-                    voiceTypeBufferRef.current.candidate = rawVoiceData.type;
-                    voiceTypeBufferRef.current.bufferLength = 0;
-                } else {
-                    voiceTypeBufferRef.current.bufferLength++;
-                }
-
-                if (voiceTypeBufferRef.current.bufferLength > 10) {
-                    voiceTypeBufferRef.current.currentType = rawVoiceData.type;
-                    // Keep color/data synced
-                    voiceTypeData = rawVoiceData;
-                } else {
-                    // Return previous stable type but keep measuring
-                    voiceTypeData = {
-                        ...rawVoiceData,
-                        type: voiceTypeBufferRef.current.currentType,
-                        color: rawVoiceData.color // Allow color to update for feedback? No, keep it stable
-                    };
-                    // Actually, let's just stick to the old textual type to stop flickering
-                    analyzeVoiceType(pitchBufferRef.current.stableFreq, centroid, rms, 'male'); // re-run or just mock?
-                    // Better: Just use the stabilized type string, determining color might be tricky if we don't re-run logic.
-                    // For simplicity, we just use the rawData but OVERRIDE the type name.
-                    voiceTypeData.type = voiceTypeBufferRef.current.currentType;
-                }
-
-                if (sourceType !== 'file') {
-                    keyFinderRef.current.processNote(noteInfo.midi % 12);
-                }
-                vibratoRef.current.update(pitchBufferRef.current.stableFreq, performance.now());
+                pitchBufferRef.current.lastFreq = frequency;
             }
         } else {
-            // Silence logic resets buffers?
-            // Maybe not, to allow legato breathing.
-            pitchBufferRef.current.frames = 0;
-            voiceTypeBufferRef.current.bufferLength = 0;
+            vibratoRef.current.reset();
         }
 
-        const vibratoStats = vibratoRef.current.analyze();
-        const estimatedKey = (sourceType === 'file' && keyRef.current)
-            ? keyRef.current
-            : keyFinderRef.current.estimateKey();
+        // Only update UI if mic is active source OR if we want live feedback for file play (optional)
+        // For file playback, we rely on the Static Analysis for Key/Type, but we can show Note/Freq live
+        // if (sourceType === 'mic') ... logic? 
+        // Let's allow live feedback for both.
 
-        setAudioData({
-            frequency: frequency !== -1 ? Math.round(frequency) : 0,
-            note: noteInfo ? noteInfo.name + noteInfo.octave : '-',
-            cents: noteInfo ? noteInfo.cents : 0,
-            exactMidi: noteInfo ? noteInfo.midi + (noteInfo.cents / 100) : null,
-            targetFrequency: noteInfo ? noteInfo.targetFrequency : 0,
-            voiceType: voiceTypeData.type,
-            voiceTypeColor: voiceTypeData.color,
-            volume: rms,
-            estimatedKey: estimatedKey,
-
-            vibrato: vibratoStats,
-            bpm: bpmRef.current,
-            pitchRange: rangeRef.current,
-            detectedVoiceTypes: voiceTypesRef.current
-        });
+        if (noteInfo) {
+            setAudioData(prev => ({
+                ...prev,
+                frequency: Math.round(pitchBufferRef.current.stableFreq || frequency),
+                note: noteInfo.note,
+                cents: noteInfo.cents,
+                volume: Math.round(rms * 100),
+                targetFrequency: noteInfo.frequency
+            }));
+        } else {
+            // Decay
+        }
 
         rafIdRef.current = requestAnimationFrame(updateLoop);
     };
@@ -290,13 +217,12 @@ export function AudioProvider({ children }) {
             isListening,
             startMic,
             stopListening,
-            handleFileUpload,
             audioData,
             freqData,
-            sourceType,
             availableDevices,
             selectedDeviceId,
             setSelectedDeviceId,
+            initAudio,
             inputGain,
             setInputGain,
             noiseGateThreshold,
@@ -307,4 +233,6 @@ export function AudioProvider({ children }) {
     );
 }
 
-export const useAudio = () => useContext(AudioContextState);
+export function useAudio() {
+    return useContext(AudioContextState);
+}

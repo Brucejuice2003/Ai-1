@@ -1,6 +1,14 @@
 # Deployment & Updates Guide 🚀
 
-Yes! You can update your site **as many times as you want**. Releasing is not final.
+## How to Make Changes 🛠️
+You don't need to learn code to change your site. **I am your developer.**
+
+1.  **Just Ask Me**: Tell me what you want (e.g., *"Change the title to 'Vocal Master'"*, *"Add a dark mode toggle"*).
+2.  **I Code It**: I will modify the files on your computer.
+3.  **We Re-Build**: I'll create a new "Production Version".
+4.  **You Re-Upload**: You drag the new folder to Netlify.
+
+It's that simple!
 
 ## How to Update Your Live Site
 Whenever you make changes to the code (or I make them for you):

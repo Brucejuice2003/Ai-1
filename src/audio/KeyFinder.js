@@ -12,22 +12,38 @@ export class KeyFinder {
     constructor() {
         this.chroma = new Array(12).fill(0);
         this.totalSamples = 0;
+
+        // Stabilization for Live Mode
+        this.lastKeyCandidate = "";
+        this.stableKey = "Detecting...";
+        this.consistencyCount = 0;
     }
 
     // Add a detected note to the accumulator
     processNote(noteIndex) { // 0=C, 1=C#, etc.
         if (noteIndex == null || noteIndex < 0 || noteIndex > 11) return;
-        this.chroma[noteIndex]++;
+
+        // DECAY for live mode: Smoothly forget old notes
+        // Multiply existing chroma by 0.995 (decays old history over ~200 frames or ~3-4s)
+        for (let i = 0; i < 12; i++) {
+            this.chroma[i] *= 0.995;
+        }
+
+        this.chroma[noteIndex] += 1.0;
         this.totalSamples++;
     }
 
     reset() {
         this.chroma = new Array(12).fill(0);
         this.totalSamples = 0;
+        this.lastKeyCandidate = "";
+        this.stableKey = "Detecting...";
+        this.consistencyCount = 0;
     }
 
     // Call this periodically to get the estimated key
-    estimateKey() {
+    // useStability: set to true for real-time mic to prevent flickering
+    estimateKey(useStability = false) {
         if (this.totalSamples < 10) return "Detecting..."; // Needs more data
 
         // Normalize chroma
@@ -60,7 +76,22 @@ export class KeyFinder {
             }
         }
 
-        return bestKey;
+        if (!useStability) return bestKey;
+
+        // Stability Logic
+        if (bestKey === this.lastKeyCandidate) {
+            this.consistencyCount++;
+        } else {
+            this.lastKeyCandidate = bestKey;
+            this.consistencyCount = 0;
+        }
+
+        // Require 15 consecutive frames of consistency (approx 0.25s)
+        if (this.consistencyCount > 15) {
+            this.stableKey = bestKey;
+        }
+
+        return this.stableKey;
     }
 }
 
@@ -69,34 +100,60 @@ export class KeyFinder {
  */
 import { autoCorrelate, getNoteFromFrequency } from "./utils";
 
-export function detectKeyFromBuffer(audioBuffer) {
-    const kf = new KeyFinder();
-    const channelData = audioBuffer.getChannelData(0);
-    const sampleRate = audioBuffer.sampleRate;
+export async function detectKeyFromBuffer(audioBuffer) {
+    try {
+        const kf = new KeyFinder();
+        const channelData = audioBuffer.getChannelData(0);
+        const sampleRate = audioBuffer.sampleRate;
 
-    // Process in chunks (skip some for speed, but ensure coverage)
-    const windowSize = 4096;
-    const hopSize = 8192; // ~0.18s
+        // Process in chunks (skip some for speed, but ensure coverage)
+        const windowSize = 4096;
+        const hopSize = 8192; // ~0.18s
 
-    for (let i = 0; i < channelData.length; i += hopSize) {
-        const chunk = channelData.slice(i, i + windowSize);
-        if (chunk.length < windowSize) break;
+        let lastYield = Date.now();
+        const startTime = Date.now();
+        const MAX_DURATION = 30000; // 30s timeout (User requested thorough analysis)
+        let loopCounter = 0;
 
-        // RMS check (skip silence)
-        let rms = 0;
-        for (let j = 0; j < chunk.length; j++) rms += chunk[j] * chunk[j];
-        rms = Math.sqrt(rms / windowSize);
+        for (let i = 0; i < channelData.length; i += hopSize) {
+            loopCounter++;
 
-        if (rms > 0.05) {
-            const freq = autoCorrelate(chunk, sampleRate);
-            if (freq !== -1 && freq > 60 && freq < 2000) {
-                const note = getNoteFromFrequency(freq);
-                if (note) {
-                    kf.processNote(note.midi % 12);
+            // Safety Timeout
+            if (Date.now() - startTime > MAX_DURATION) {
+                console.warn("Key detection timed out!");
+                return "Unknown";
+            }
+
+            // Yield to main thread every 50 chunks (approx 125ms of audio processed)
+            if (loopCounter % 50 === 0) {
+                if (Date.now() - lastYield > 30) {
+                    await new Promise(r => setTimeout(r, 0));
+                    lastYield = Date.now();
+                }
+            }
+
+            const chunk = channelData.slice(i, i + windowSize);
+            if (chunk.length < windowSize) break;
+
+            // RMS check (skip silence)
+            let rms = 0;
+            for (let j = 0; j < chunk.length; j++) rms += chunk[j] * chunk[j];
+            rms = Math.sqrt(rms / windowSize);
+
+            if (rms > 0.005) {
+                const freq = autoCorrelate(chunk, sampleRate);
+                if (freq !== -1 && freq > 60 && freq < 2000) {
+                    const note = getNoteFromFrequency(freq);
+                    if (note) {
+                        kf.processNote(note.midi % 12);
+                    }
                 }
             }
         }
-    }
 
-    return kf.estimateKey();
+        return kf.estimateKey();
+    } catch (e) {
+        console.error("Key detection failed:", e);
+        return "Unknown";
+    }
 }

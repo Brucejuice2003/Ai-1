@@ -33,31 +33,62 @@ export function AuthProvider({ children }) {
         }
     }, []);
 
+    const ADMIN_EMAILS = ['jack.elzarka@gmail.com', 'xxxbrjuice@gmail.com'];
+
     const login = async (email, password) => {
         // Mock simulation
         await new Promise(r => setTimeout(r, 1000));
 
-        const mockUser = {
-            id: 'user_' + Math.random().toString(36).substr(2, 9),
-            email,
-            name: email.split('@')[0],
-            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`
-        };
+        const db = JSON.parse(localStorage.getItem('mock_users_db') || '{}');
+        const normalizedEmail = email.toLowerCase();
+        const existingUser = db[normalizedEmail];
 
-        setUser(mockUser);
-        localStorage.setItem('user_session', JSON.stringify(mockUser));
-        return mockUser;
+        if (!existingUser) {
+            throw new Error("You need to sign up first!");
+        }
+
+        if (existingUser.password !== password) {
+            throw new Error("Incorrect password");
+        }
+
+        // Admin Override: Grant Premium
+        if (ADMIN_EMAILS.includes(normalizedEmail)) {
+            existingUser.plan = 'premium';
+            // Save back to DB so it persists
+            db[normalizedEmail] = existingUser;
+            localStorage.setItem('mock_users_db', JSON.stringify(db));
+        }
+
+        setUser(existingUser);
+        localStorage.setItem('user_session', JSON.stringify(existingUser));
+        return existingUser;
     };
 
     const signup = async (name, email, password) => {
         await new Promise(r => setTimeout(r, 1500));
+
+        const db = JSON.parse(localStorage.getItem('mock_users_db') || '{}');
+        const normalizedEmail = email.toLowerCase();
+
+        if (db[normalizedEmail]) {
+            throw new Error("Funny singer you already have an account");
+        }
+
+        // Check if Admin
+        const isPremium = ADMIN_EMAILS.includes(normalizedEmail);
+
         const mockUser = {
             id: 'user_' + Math.random().toString(36).substr(2, 9),
-            email,
+            email: normalizedEmail,
             name,
-            plan: null, // Forces pricing screen
+            password,
+            plan: isPremium ? 'premium' : null,
             avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`
         };
+
+        db[normalizedEmail] = mockUser;
+        localStorage.setItem('mock_users_db', JSON.stringify(db));
+
         setUser(mockUser);
         localStorage.setItem('user_session', JSON.stringify(mockUser));
         return mockUser;

@@ -81,6 +81,49 @@ export function autoCorrelate(buffer, sampleRate) {
 }
 
 /**
+ * YIN Pitch Detection Algorithm (The "Gold Standard")
+ * Robust against noise and octave errors.
+ */
+export function yinPitch(buffer, sampleRate) {
+    const threshold = 0.15; // Standard YIN threshold
+    const bufferSize = buffer.length;
+    const yinBuffer = new Float32Array(Math.floor(bufferSize / 2));
+
+    // Step 1: Difference Function
+    for (let tau = 0; tau < yinBuffer.length; tau++) {
+        yinBuffer[tau] = 0;
+        for (let i = 0; i < yinBuffer.length; i++) {
+            const delta = buffer[i] - buffer[i + tau];
+            yinBuffer[tau] += delta * delta;
+        }
+    }
+
+    // Step 2: CMNDF
+    yinBuffer[0] = 1;
+    let runningSum = 0;
+    for (let tau = 1; tau < yinBuffer.length; tau++) {
+        runningSum += yinBuffer[tau];
+        yinBuffer[tau] *= tau / runningSum;
+    }
+
+    // Step 3: Absolute Threshold
+    let tauEstimate = -1;
+    for (let tau = 2; tau < yinBuffer.length; tau++) {
+        if (yinBuffer[tau] < threshold) {
+            while (tau + 1 < yinBuffer.length && yinBuffer[tau + 1] < yinBuffer[tau]) {
+                tau++;
+            }
+            tauEstimate = tau;
+            break;
+        }
+    }
+
+    if (tauEstimate === -1) return -1;
+
+    return sampleRate / tauEstimate;
+}
+
+/**
  * Calculates Spectral Centroid.
  */
 export function getSpectralCentroid(frequencyData, sampleRate) {
@@ -99,18 +142,35 @@ export function getSpectralCentroid(frequencyData, sampleRate) {
     return numerator / denominator;
 }
 
-
 /**
- * Detects BPM from an AudioBuffer.
+ * Detects BPM from an AudioBuffer using OfflineAudioContext (Background Thread).
+ * Applies Low-Pass Filter to isolate Kick/Bass for superior accuracy.
  */
 export async function detectBPM(audioBuffer) {
     try {
-        const channelData = audioBuffer.getChannelData(0); // Use first channel
-        const sampleRate = audioBuffer.sampleRate;
+        // Create Offline Context to render audio in background
+        const offlineCtx = new OfflineAudioContext(1, audioBuffer.length, audioBuffer.sampleRate);
+        const source = offlineCtx.createBufferSource();
+        source.buffer = audioBuffer;
+
+        // Lowpass Filter to isolate Bass/Kick (The "Beat")
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.value = 150;
+        filter.Q.value = 1;
+
+        source.connect(filter);
+        filter.connect(offlineCtx.destination);
+        source.start(0);
+
+        const renderedBuffer = await offlineCtx.startRendering();
+        const channelData = renderedBuffer.getChannelData(0);
+        const sampleRate = renderedBuffer.sampleRate;
 
         // 1. Calculate volume peaks
         const windowSize = Math.floor(sampleRate * 0.05);
         let peaks = [];
+
         for (let i = 0; i < channelData.length; i += windowSize) {
             let max = 0;
             for (let j = 0; j < windowSize && i + j < channelData.length; j++) {
@@ -120,9 +180,12 @@ export async function detectBPM(audioBuffer) {
             peaks.push(max);
         }
 
-        // 2. Find significantly high peaks (beats)
-        const sortedPeaks = [...peaks].sort((a, b) => b - a);
-        const threshold = sortedPeaks[Math.floor(peaks.length * 0.3)] * 0.8;
+        // 2. Find significantly high peaks (beats) using dynamic threshold
+        // Instead of sorting all, find max peak first
+        let maxPeak = 0;
+        for (let p of peaks) if (p > maxPeak) maxPeak = p;
+
+        const threshold = maxPeak * 0.5; // 50% of max volume seems safer than sorting 30% percentile
 
         const beatIndices = [];
         for (let i = 0; i < peaks.length; i++) {
@@ -133,37 +196,40 @@ export async function detectBPM(audioBuffer) {
             }
         }
 
-        // 3. Calculate intervals
-        const intervals = [];
+        // 3. Calculate intervals and convert to immediate BPMs
+        const rawBpms = [];
         for (let i = 1; i < beatIndices.length; i++) {
-            const interval = beatIndices[i] - beatIndices[i - 1];
-            intervals.push(interval);
+            const intervalUnits = beatIndices[i] - beatIndices[i - 1];
+            // intervalUnits is in windows of (sampleRate * 0.05)
+            const seconds = intervalUnits * 0.05;
+            if (seconds === 0) continue;
+
+            let bpm = 60 / seconds;
+            // Best fit range for general music 70-170
+            while (bpm < 70) bpm *= 2;
+            while (bpm > 170) bpm /= 2;
+            rawBpms.push(bpm);
         }
 
-        // 4. Find most common interval (mode)
-        const counts = {};
-        intervals.forEach(interval => {
-            const rounded = Math.round(interval);
-            counts[rounded] = (counts[rounded] || 0) + 1;
+        // 4. Histogram of BPMs
+        const bpmCounts = {};
+        rawBpms.forEach(b => {
+            const rounded = Math.round(b);
+            bpmCounts[rounded] = (bpmCounts[rounded] || 0) + 1;
+            bpmCounts[rounded - 1] = (bpmCounts[rounded - 1] || 0) + 0.5;
+            bpmCounts[rounded + 1] = (bpmCounts[rounded + 1] || 0) + 0.5;
         });
 
         let maxCount = 0;
-        let commonInterval = 0;
-        for (const interval in counts) {
-            if (counts[interval] > maxCount) {
-                maxCount = counts[interval];
-                commonInterval = Number(interval);
+        let bestBpm = 0;
+        for (const b in bpmCounts) {
+            if (bpmCounts[b] > maxCount) {
+                maxCount = bpmCounts[b];
+                bestBpm = Number(b);
             }
         }
 
-        if (commonInterval === 0) return 0;
-
-        let bpm = Math.round(60 / (commonInterval * 0.05));
-
-        while (bpm < 70) bpm *= 2;
-        while (bpm > 180) bpm /= 2;
-
-        return Math.round(bpm);
+        return bestBpm || 0;
 
     } catch (e) {
         console.error("BPM Detection failed", e);
@@ -172,64 +238,81 @@ export async function detectBPM(audioBuffer) {
 }
 
 /**
- * Detects Pitch Range using Histogram Analysis.
- * Filters out notes that occur less than 0.5% of the time (noise).
+ * Pre-processes audio to isolate vocal range using DSP filters.
+ * Applies Highpass (85Hz) and Lowpass (1100Hz) to remove backing track.
  */
-export function detectPitchRange(audioBuffer) {
+async function preprocessForVocals(audioBuffer) {
     try {
-        const channelData = audioBuffer.getChannelData(0);
-        const sampleRate = audioBuffer.sampleRate;
-        const windowSize = 2048;
-        const hopSize = 8192; // ~0.18s
+        const offlineCtx = new OfflineAudioContext(1, audioBuffer.length, audioBuffer.sampleRate);
+        const source = offlineCtx.createBufferSource();
+        source.buffer = audioBuffer;
 
-        const midiCounts = {}; // Histogram of MIDI notes
-        let totalVoicedFrames = 0;
+        // SMART TRIMMING: Trim edges with low energy to remove instrumental bleed
+        // Finds the "Peak" of the voice and cuts off anything < 20% intensity at the edges
+        let peakEnergy = 0;
+        let peakIndex = 0;
 
-        // Loop buffer
-        for (let i = 0; i < channelData.length; i += hopSize) {
-            const chunk = channelData.slice(i, i + windowSize);
-            if (chunk.length < windowSize) break;
+        // 1. Find the Peak
+        bestCluster.forEach((m, i) => {
+            const energy = midiEnergy[m] || 0;
+            if (energy > peakEnergy) {
+                peakEnergy = energy;
+                peakIndex = i;
+            }
+        });
 
-            // RMS check
-            let rms = 0;
-            for (let j = 0; j < chunk.length; j++) rms += chunk[j] * chunk[j];
-            rms = Math.sqrt(rms / windowSize);
+        const energyThreshold = peakEnergy * 0.20; // 20% Cutoff
 
-            if (rms > 0.02) {
-                const frequency = autoCorrelate(chunk, sampleRate);
-                if (frequency !== -1 && frequency > 70 && frequency < 1100) {
-                    const note = getNoteFromFrequency(frequency);
-                    if (note) {
-                        midiCounts[note.midi] = (midiCounts[note.midi] || 0) + 1;
-                        totalVoicedFrames++;
-                    }
-                }
+        // 2. Walk from Peak outwards to define limits
+        let trimStart = 0;
+        // Search backwards from peak for start
+        for (let i = 0; i <= peakIndex; i++) {
+            if ((midiEnergy[bestCluster[i]] || 0) > energyThreshold) {
+                trimStart = i;
+                break;
             }
         }
 
-        if (totalVoicedFrames < 10) return null;
+        let trimEnd = bestCluster.length - 1;
+        // Search forwards from peak (or backwards from end)
+        for (let i = bestCluster.length - 1; i >= peakIndex; i--) {
+            if ((midiEnergy[bestCluster[i]] || 0) > energyThreshold) {
+                trimEnd = i;
+                break;
+            }
+        }
 
-        // Filter: Ignore notes appearing < 0.5% of the time (noise blips)
-        const threshold = totalVoicedFrames * 0.005;
-        const validMidis = Object.keys(midiCounts)
-            .map(Number)
-            .filter(midi => midiCounts[midi] > threshold);
+        const trimmedCluster = bestCluster.slice(trimStart, trimEnd + 1);
 
-        if (validMidis.length === 0) return null;
+        // Use trimmed cluster for range
+        const minMidi = trimmedCluster[0];
+        const maxMidi = trimmedCluster[trimmedCluster.length - 1];
 
-        validMidis.sort((a, b) => a - b);
-        const minMidi = validMidis[0];
-        const maxMidi = validMidis[validMidis.length - 1];
+        // Calculate "Tessitura" (Weighted Average MIDI) from TRIMMED CLUSTER
+        let weightedSum = 0;
+        let totalWeight = 0;
+        trimmedCluster.forEach(m => {
+            const weight = midiCounts[m];
+            weightedSum += m * weight;
+            totalWeight += weight;
+        });
+        const avgMidi = totalWeight > 0 ? weightedSum / totalWeight : (minMidi + maxMidi) / 2;
 
-        // Convert back to frequency/note for return
-        const minFreq = A4_FREQ * Math.pow(2, (minMidi - 69) / 12);
-        const maxFreq = A4_FREQ * Math.pow(2, (maxMidi - 69) / 12);
+        // Adaptive Capping: If voice is likely Male (Avg < 60), cap the Max Note.
+        let finalMaxMidi = maxMidi;
+        if (avgMidi < 60) {
+            finalMaxMidi = Math.min(finalMaxMidi, 80); // Cap at G#5
+        }
+
+        const minFreq = 440 * Math.pow(2, (minMidi - 69) / 12);
+        const maxFreq = 440 * Math.pow(2, (finalMaxMidi - 69) / 12);
 
         return {
             minFreq: minFreq,
             maxFreq: maxFreq,
             minNote: getNoteFromFrequency(minFreq),
-            maxNote: getNoteFromFrequency(maxFreq)
+            maxNote: getNoteFromFrequency(maxFreq),
+            avgMidi: avgMidi // Return for analysis
         };
     } catch (e) {
         console.error("Range detection failed", e);
@@ -238,18 +321,41 @@ export function detectPitchRange(audioBuffer) {
 }
 
 /**
- * Maps a frequency range to potential voice types.
+ * Maps a frequency range to potential voice types using Range AND Tessitura.
  */
-export function getVoiceTypesFromRange(minFreq, maxFreq) {
+export function getVoiceTypesFromRange(minFreq, maxFreq, avgMidi = null) {
     const types = [];
 
-    if (minFreq < 100) types.push("Bass");
-    if (minFreq < 130 && maxFreq > 300) types.push("Baritone");
-    if (minFreq < 160 && maxFreq > 400) types.push("Tenor");
-    if (minFreq > 160 && maxFreq > 500) types.push("Alto");
-    if (minFreq > 240) types.push("Soprano");
+    // If avgMidi isn't provided (legacy calls), estimate it from range center
+    if (!avgMidi) {
+        const minMidi = 12 * Math.log2(minFreq / 440) + 69;
+        const maxMidi = 12 * Math.log2(maxFreq / 440) + 69;
+        avgMidi = (minMidi + maxMidi) / 2;
+    }
 
-    if (types.length === 0) return ["General"];
+    // Tessitura-based classification
+    if (avgMidi < 48) { // Below C3 range
+        types.push("Bass");
+        if (avgMidi > 43) types.push("Baritone");
+    } else if (avgMidi < 55) { // C3 - G3 range
+        types.push("Baritone");
+        if (avgMidi < 50) types.push("Bass");
+        else types.push("Tenor");
+    } else if (avgMidi < 63) { // G3 - Eb4 range
+        types.push("Tenor");
+        if (avgMidi > 59) types.push("Alto");
+        else types.push("Baritone");
+    } else if (avgMidi < 69) { // Eb4 - A4 range
+        types.push("Alto / Countertenor");
+        if (avgMidi > 65) types.push("Soprano");
+        else types.push("Tenor");
+    } else { // Above A4
+        types.push("Soprano");
+        if (avgMidi < 74) types.push("Alto / Countertenor");
+    }
 
-    return types.slice(0, 2);
+    // Safety fallback for weird noise analysis
+    if (types.length === 0) return ["Unknown"];
+
+    return types.slice(0, 1);
 }

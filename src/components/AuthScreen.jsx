@@ -44,8 +44,7 @@ export default function AuthScreen() {
                 className="w-full max-w-md bg-black/40 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden"
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.5, type: "spring", stiffness: 200, damping: 20 }}
-            >
+                transition={{ duration: 0.5, type: "spring", stiffness: 200, damping: 20 }}>
                 {/* Header */}
                 <div className="text-center mb-8">
                     <h1 className="text-3xl font-bold neon-text mb-2 tracking-tighter">
@@ -65,8 +64,7 @@ export default function AuthScreen() {
                                 animate={{ opacity: 1, height: 'auto', y: 0 }}
                                 exit={{ opacity: 0, height: 0, y: -10 }}
                                 transition={{ duration: 0.3 }}
-                                className="space-y-2 overflow-hidden"
-                            >
+                                className="space-y-2 overflow-hidden">
                                 <div className="relative group">
                                     <User className="absolute left-3 top-3.5 text-gray-500 w-5 h-5 group-focus-within:text-neon-blue transition-colors" />
                                     <input
@@ -76,6 +74,7 @@ export default function AuthScreen() {
                                         onChange={e => setName(e.target.value)}
                                         className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-white focus:border-neon-blue focus:outline-none focus:ring-1 focus:ring-neon-blue transition-all"
                                         required={!isLogin}
+                                        autoComplete="username"
                                     />
                                 </div>
                             </motion.div>
@@ -91,6 +90,7 @@ export default function AuthScreen() {
                             onChange={e => setEmail(e.target.value)}
                             className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-white focus:border-neon-blue focus:outline-none focus:ring-1 focus:ring-neon-blue transition-all"
                             required
+                            autoComplete="email"
                         />
                     </div>
 
@@ -103,6 +103,7 @@ export default function AuthScreen() {
                             onChange={e => setPassword(e.target.value)}
                             className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-white focus:border-neon-blue focus:outline-none focus:ring-1 focus:ring-neon-blue transition-all"
                             required
+                            autoComplete={isLogin ? "current-password" : "new-password"}
                         />
                     </div>
 
@@ -110,8 +111,7 @@ export default function AuthScreen() {
                         <motion.p
                             initial={{ opacity: 0, y: -10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="text-red-400 text-xs text-center font-bold bg-red-500/10 py-2 rounded-lg"
-                        >
+                            className="text-red-400 text-xs text-center font-bold bg-red-500/10 py-2 rounded-lg">
                             {error}
                         </motion.p>
                     )}
@@ -119,8 +119,7 @@ export default function AuthScreen() {
                     <button
                         type="submit"
                         disabled={isLoading}
-                        className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 mt-6 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]"
-                    >
+                        className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 mt-6 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]">
                         {isLoading ? (
                             <Loader2 className="w-5 h-5 animate-spin" />
                         ) : (
@@ -139,8 +138,7 @@ export default function AuthScreen() {
                             setIsLogin(!isLogin);
                             setError('');
                         }}
-                        className="text-sm text-gray-400 hover:text-white transition-colors"
-                    >
+                        className="text-sm text-gray-400 hover:text-white transition-colors">
                         {isLogin ? "Don't have an account? " : "Already have an account? "}
                         <span className="text-neon-blue font-bold ml-1">
                             {isLogin ? 'Sign Up' : 'Log In'}
