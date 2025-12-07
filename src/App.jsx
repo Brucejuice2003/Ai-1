@@ -145,6 +145,20 @@ const MainInterface = ({ user, logout, updatePlan }) => {
 };
 
 function App() {
+  // DEV MODE: Bypass auth for testing
+  const user = { email: 'dev@test.com', plan: 'premium', name: 'Developer' };
+  const logout = () => console.log('Dev mode - logout disabled');
+  const updatePlan = () => {};
+
+  return (
+    <AudioProvider>
+      <MainInterface user={user} logout={logout} updatePlan={updatePlan} />
+    </AudioProvider>
+  );
+}
+
+/* ORIGINAL AUTH CODE - Uncomment to re-enable
+function AppWithAuth() {
   const { user, loading, logout, updatePlan } = useAuth();
 
   if (loading) {
@@ -160,7 +174,6 @@ function App() {
     );
   }
 
-  // Force Plan Selection
   if (!user.plan) {
     return (
       <div className="min-h-screen text-white selection:bg-cyan-500/30 font-sans relative">
@@ -176,5 +189,6 @@ function App() {
     </AudioProvider>
   );
 }
+*/
 
 export default App;

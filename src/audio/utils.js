@@ -238,81 +238,106 @@ export async function detectBPM(audioBuffer) {
 }
 
 /**
- * Pre-processes audio to isolate vocal range using DSP filters.
- * Applies Highpass (85Hz) and Lowpass (1100Hz) to remove backing track.
+ * Detects Pitch Range from an AudioBuffer using YIN and cluster analysis.
+ * Returns min/max frequencies and voice type estimation.
  */
-async function preprocessForVocals(audioBuffer) {
+export async function detectPitchRange(audioBuffer) {
     try {
-        const offlineCtx = new OfflineAudioContext(1, audioBuffer.length, audioBuffer.sampleRate);
-        const source = offlineCtx.createBufferSource();
-        source.buffer = audioBuffer;
+        const channelData = audioBuffer.getChannelData(0);
+        const sampleRate = audioBuffer.sampleRate;
+        const windowSize = 2048;
+        const hopSize = 1024;
 
-        // SMART TRIMMING: Trim edges with low energy to remove instrumental bleed
-        // Finds the "Peak" of the voice and cuts off anything < 20% intensity at the edges
-        let peakEnergy = 0;
-        let peakIndex = 0;
+        const midiCounts = {};
+        const midiEnergy = {};
+        let totalVoicedFrames = 0;
 
-        // 1. Find the Peak
-        bestCluster.forEach((m, i) => {
-            const energy = midiEnergy[m] || 0;
-            if (energy > peakEnergy) {
-                peakEnergy = energy;
-                peakIndex = i;
-            }
-        });
+        // Scan buffer for pitches
+        for (let i = 0; i < channelData.length - windowSize; i += hopSize) {
+            const frame = channelData.slice(i, i + windowSize);
 
-        const energyThreshold = peakEnergy * 0.20; // 20% Cutoff
+            // RMS check
+            let rms = 0;
+            for (let j = 0; j < frame.length; j++) rms += frame[j] * frame[j];
+            rms = Math.sqrt(rms / frame.length);
 
-        // 2. Walk from Peak outwards to define limits
-        let trimStart = 0;
-        // Search backwards from peak for start
-        for (let i = 0; i <= peakIndex; i++) {
-            if ((midiEnergy[bestCluster[i]] || 0) > energyThreshold) {
-                trimStart = i;
-                break;
-            }
-        }
-
-        let trimEnd = bestCluster.length - 1;
-        // Search forwards from peak (or backwards from end)
-        for (let i = bestCluster.length - 1; i >= peakIndex; i--) {
-            if ((midiEnergy[bestCluster[i]] || 0) > energyThreshold) {
-                trimEnd = i;
-                break;
+            if (rms > 0.01) {
+                const frequency = yinPitch(frame, sampleRate);
+                if (frequency !== -1 && frequency > 60 && frequency < 1400) {
+                    const note = getNoteFromFrequency(frequency);
+                    if (note) {
+                        midiCounts[note.midi] = (midiCounts[note.midi] || 0) + 1;
+                        midiEnergy[note.midi] = (midiEnergy[note.midi] || 0) + rms;
+                        totalVoicedFrames++;
+                    }
+                }
             }
         }
 
-        const trimmedCluster = bestCluster.slice(trimStart, trimEnd + 1);
+        if (totalVoicedFrames < 10) {
+            return { isInstrumental: true, minFreq: 0, maxFreq: 0, minNote: null, maxNote: null, avgMidi: 0 };
+        }
 
-        // Use trimmed cluster for range
-        const minMidi = trimmedCluster[0];
-        const maxMidi = trimmedCluster[trimmedCluster.length - 1];
+        // Find the largest cluster of MIDI notes
+        const threshold = totalVoicedFrames * 0.01;
+        const validMidis = Object.keys(midiCounts)
+            .map(Number)
+            .filter(midi => midiCounts[midi] > threshold)
+            .sort((a, b) => a - b);
 
-        // Calculate "Tessitura" (Weighted Average MIDI) from TRIMMED CLUSTER
+        if (validMidis.length === 0) {
+            return { isInstrumental: true, minFreq: 0, maxFreq: 0, minNote: null, maxNote: null, avgMidi: 0 };
+        }
+
+        // Cluster analysis - find largest contiguous group
+        const clusters = [];
+        let currentCluster = [validMidis[0]];
+
+        for (let i = 1; i < validMidis.length; i++) {
+            if (validMidis[i] - validMidis[i - 1] <= 3) {
+                currentCluster.push(validMidis[i]);
+            } else {
+                clusters.push(currentCluster);
+                currentCluster = [validMidis[i]];
+            }
+        }
+        clusters.push(currentCluster);
+
+        // Find the cluster with most notes
+        let bestCluster = clusters[0];
+        let maxClusterWeight = 0;
+        for (const cluster of clusters) {
+            const weight = cluster.reduce((sum, m) => sum + (midiCounts[m] || 0), 0);
+            if (weight > maxClusterWeight) {
+                maxClusterWeight = weight;
+                bestCluster = cluster;
+            }
+        }
+
+        // Calculate range from best cluster
+        const minMidi = bestCluster[0];
+        const maxMidi = bestCluster[bestCluster.length - 1];
+
+        // Calculate average MIDI (tessitura)
         let weightedSum = 0;
         let totalWeight = 0;
-        trimmedCluster.forEach(m => {
-            const weight = midiCounts[m];
+        bestCluster.forEach(m => {
+            const weight = midiCounts[m] || 0;
             weightedSum += m * weight;
             totalWeight += weight;
         });
         const avgMidi = totalWeight > 0 ? weightedSum / totalWeight : (minMidi + maxMidi) / 2;
 
-        // Adaptive Capping: If voice is likely Male (Avg < 60), cap the Max Note.
-        let finalMaxMidi = maxMidi;
-        if (avgMidi < 60) {
-            finalMaxMidi = Math.min(finalMaxMidi, 80); // Cap at G#5
-        }
-
         const minFreq = 440 * Math.pow(2, (minMidi - 69) / 12);
-        const maxFreq = 440 * Math.pow(2, (finalMaxMidi - 69) / 12);
+        const maxFreq = 440 * Math.pow(2, (maxMidi - 69) / 12);
 
         return {
+            isInstrumental: false,
             minFreq: minFreq,
             maxFreq: maxFreq,
             minNote: getNoteFromFrequency(minFreq),
             maxNote: getNoteFromFrequency(maxFreq),
-            avgMidi: avgMidi // Return for analysis
+            avgMidi: avgMidi
         };
     } catch (e) {
         console.error("Range detection failed", e);
