@@ -1,210 +1,334 @@
 import { useAudio } from '../audio/AudioContext';
+import { motion } from 'framer-motion';
+import { Mic, MicOff, Activity, Music, Waves, Settings2 } from 'lucide-react';
+import { useState } from 'react';
+import { cn } from '../lib/utils';
+
+// Components
 import Visualizer from './Visualizer';
-import { Mic, Activity, Music } from 'lucide-react';
-import { useRef } from 'react';
 import VibratoGraph from './VibratoGraph';
+import { PageContainer, PageHeader } from './layout/PageContainer';
+import { Card, StatCard } from './ui/Card';
+import { Button, IconButton } from './ui/Button';
+import { Badge, LiveBadge } from './ui/Badge';
+import { BlurFade } from './ui/BlurFade';
+import { BorderBeam } from './ui/BorderBeam';
+import { NumberTicker } from './ui/NumberTicker';
+import { Select, Label } from './ui/Input';
 
 export default function Dashboard() {
-    const {
-        isListening,
-        startMic,
-        stopListening,
-        audioData,
-        freqData,
-        availableDevices,
-        selectedDeviceId,
-        setSelectedDeviceId,
-        inputGain,
-        setInputGain,
-        noiseGateThreshold,
-        setNoiseGateThreshold
-    } = useAudio();
+  const {
+    isListening,
+    startMic,
+    stopListening,
+    audioData,
+    freqData,
+    availableDevices,
+    selectedDeviceId,
+    setSelectedDeviceId,
+    inputGain,
+    setInputGain,
+    noiseGateThreshold,
+    setNoiseGateThreshold
+  } = useAudio();
 
-    return (
-        <div className="min-h-screen text-white px-4 pt-24 pb-8 md:p-8 md:pt-28 flex flex-col items-center justify-center relative">
-            {/* Background ambient light */}
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-900 rounded-full blur-[150px] opacity-20 pointer-events-none transition-all duration-[2000ms] ease-in-out animate-pulse"></div>
+  const [showSettings, setShowSettings] = useState(false);
 
-            <header className="z-10 mb-12 text-center">
-                <h1 className="text-5xl font-bold mb-2 neon-text tracking-tighter drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">SINGERS DREAMS</h1>
-                <p className="text-gray-200 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">Professional Voice Analysis & Key Detection</p>
-            </header>
+  // Calculate cents indicator position and color
+  const centsPosition = 50 + (audioData.cents / 50) * 50;
+  const centsColor =
+    Math.abs(audioData.cents) < 10
+      ? 'bg-success'
+      : audioData.cents < 0
+        ? 'bg-info'
+        : 'bg-error';
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-6xl z-10">
-                {/* Main Pitch Display */}
-                <div className="glass-panel p-8 flex flex-col items-center justify-center aspect-square md:aspect-auto hover:shadow-[0_0_40px_rgba(147,51,234,0.4)] transition-all duration-500 hover:scale-[1.02] hover:border-purple-400/50">
-                    <div className="text-center mb-6">
-                        <h2 className="text-gray-400 uppercase tracking-widest text-sm mb-2">Current Note</h2>
-                        <div className={`text-9xl font-bold transition-colors duration-700 ${audioData.voiceTypeColor}`}>
-                            {audioData.note}
-                        </div>
-                        <div className="mt-2 text-xl font-mono text-gray-300">
-                            {audioData.frequency} Hz
-                        </div>
-                    </div>
+  const isActive = audioData.note !== '-' && audioData.frequency > 50;
 
-                    {/* Cents deviation meter */}
-                    <div className="w-64 h-2 bg-gray-800 rounded-full overflow-hidden mb-1 relative">
-                        <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10"></div>
-                        <div
-                            className="h-full transition-all duration-100 ease-linear"
-                            style={{
-                                width: '10%',
-                                backgroundColor: Math.abs(audioData.cents) < 10 ? '#00ff00' : audioData.cents < 0 ? '#3b82f6' : '#ef4444',
-                                marginLeft: `${50 + (audioData.cents / 50) * 50}%`,
-                                opacity: audioData.note === '-' ? 0 : 1
-                            }}
-                        ></div>
-                    </div>
-
-                    {/* Ruler / Scale */}
-                    <div className="w-64 h-6 relative mb-4">
-                        {[-50, -25, 0, 25, 50].map((tick) => {
-                            // Calculate Hz for this tick relative to target frequency
-                            const tickHz = audioData.targetFrequency ?
-                                (audioData.targetFrequency * Math.pow(2, tick / 1200)) : 0;
-
-                            return (
-                                <div
-                                    key={tick}
-                                    className="absolute top-0 flex flex-col items-center"
-                                    style={{ left: `${((tick + 50) / 100) * 100}%`, transform: 'translateX(-50%)' }}
-                                >
-                                    <div className="w-0.5 h-1.5 bg-gray-600 mb-1"></div>
-                                    <span className="text-[10px] text-gray-500 font-mono">
-                                        {tickHz > 0 ? Math.round(tickHz) : tick}
-                                    </span>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <span className="text-sm text-gray-400">{audioData.cents > 0 ? `+${audioData.cents}` : audioData.cents} cents</span>
-                </div>
-
-                {/* Info & Visualizer */}
-                <div className="flex flex-col gap-6">
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-2 gap-6">
-                        <div className="glass-panel p-6 flex flex-col items-center justify-center hover:shadow-[0_0_30px_rgba(168,85,247,0.4)] transition-all duration-500 hover:scale-105 group">
-                            <Activity className="w-8 h-8 mb-2 text-purple-400 group-hover:scale-110 transition-transform duration-300" />
-                            <span className="text-gray-400 text-sm uppercase group-hover:text-purple-300 transition-colors">Voice Type</span>
-                            <span className={`text-2xl font-bold mt-1 ${audioData.voiceTypeColor}`}>{audioData.voiceType}</span>
-                        </div>
-                        <div className="glass-panel p-6 flex flex-col items-center justify-center hover:shadow-[0_0_30px_rgba(34,211,238,0.4)] transition-all duration-500 hover:scale-105 group">
-                            <Music className="w-8 h-8 mb-2 text-cyan-400 group-hover:scale-110 transition-transform duration-300" />
-                            <span className="text-gray-400 text-sm uppercase group-hover:text-cyan-300 transition-colors">Detailed Key</span>
-                            <span className="text-2xl font-bold mt-1 text-cyan-400">{audioData.estimatedKey}</span>
-                        </div>
-                    </div>
-
-                    {/* Vibrato Meter */}
-                    <div className="glass-panel p-4 flex items-center justify-between relative overflow-hidden">
-                        <div className="z-10">
-                            <h3 className="text-gray-400 text-sm uppercase mb-1">Vibrato</h3>
-                            <div className="flex items-baseline gap-2">
-                                <span className={`text-2xl font-bold ${audioData.vibrato?.isVibrato ? 'text-green-400' : 'text-gray-600'}`}>
-                                    {audioData.vibrato?.isVibrato ? audioData.vibrato.rate : '--'}
-                                </span>
-                                <span className="text-sm text-gray-500">Hz</span>
-                            </div>
-                            <div className="text-xs text-gray-500 mt-1">
-                                Depth: {audioData.vibrato?.isVibrato ? audioData.vibrato.depth : 0} cents
-                            </div>
-                            <div className={`text-xs font-bold mt-1 uppercase tracking-wide ${audioData.vibrato?.color}`}>
-                                {audioData.vibrato?.isVibrato ? audioData.vibrato.quality : ''}
-                            </div>
-                        </div>
-
-
-                        {/* Wave Visual (Real-time Graph) */}
-                        <div className="w-48 h-16 relative flex items-center justify-center bg-black/20 rounded-lg overflow-hidden border border-white/5">
-                            <VibratoGraph
-                                pitch={audioData.exactMidi}
-                                isActive={audioData.frequency > 50}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Visualizer Area */}
-                    <div className="glass-panel flex-grow p-4 min-h-[200px] relative">
-                        <Visualizer data={freqData} />
-                    </div>
-                </div>
+  return (
+    <PageContainer maxWidth="6xl" className="py-6 lg:py-8">
+      {/* Header */}
+      <BlurFade delay={0}>
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <h1 className="text-2xl font-bold text-white">Live Analysis</h1>
+              {isListening && <LiveBadge />}
             </div>
-
-            {/* Controls */}
-            <div className="z-10 mt-12 flex flex-col md:flex-row gap-6 items-center">
-                {/* Device Selector */}
-                <div className="flex flex-col gap-2 w-full md:w-64">
-                    <label className="text-gray-400 text-xs uppercase tracking-wider pl-2">Input Device</label>
-                    <select
-                        value={selectedDeviceId}
-                        onChange={(e) => {
-                            setSelectedDeviceId(e.target.value);
-                            if (isListening) {
-                                stopListening();
-                                // Optional: Restart immediately or let user restart?
-                                // Let's just stop it so they can restart with new device
-                            }
-                        }}
-                        className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-3 focus:border-cyan-500 focus:outline-none transition-colors"
-                    >
-                        <option value="default">Default</option>
-                        {availableDevices.map(device => (
-                            <option key={device.deviceId} value={device.deviceId}>
-                                {device.label || `Microphone ${device.deviceId.slice(0, 5)}...`}
-                            </option>
-                        ))}
-                    </select>
-                </div>
-
-                {/* Audio Settings */}
-                <div className="flex gap-4 items-center">
-                    <div className="flex flex-col gap-2 w-32">
-                        <label className="text-gray-400 text-xs uppercase tracking-wider pl-2 flex justify-between">
-                            <span>Gain</span>
-                            <span className="text-cyan-400">{inputGain.toFixed(1)}x</span>
-                        </label>
-                        <input
-                            type="range"
-                            min="0"
-                            max="5"
-                            step="0.1"
-                            value={inputGain}
-                            onChange={(e) => setInputGain(parseFloat(e.target.value))}
-                            className="w-full accent-cyan-500 h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer"
-                        />
-                    </div>
-                    <div className="flex flex-col gap-2 w-32">
-                        <label className="text-gray-400 text-xs uppercase tracking-wider pl-2 flex justify-between">
-                            <span>Gate</span>
-                            <span className="text-red-400">{noiseGateThreshold.toFixed(3)}</span>
-                        </label>
-                        <input
-                            type="range"
-                            min="0"
-                            max="0.1"
-                            step="0.001"
-                            value={noiseGateThreshold}
-                            onChange={(e) => setNoiseGateThreshold(parseFloat(e.target.value))}
-                            className="w-full accent-red-500 h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer"
-                        />
-                    </div>
-                </div>
-
-                <button
-                    onClick={isListening ? stopListening : startMic}
-                    className={`flex items-center gap-3 px-10 py-5 rounded-full font-bold text-lg transition-all duration-500 transform hover:scale-110 active:scale-95
-                    ${isListening
-                            ? 'bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 shadow-[0_0_30px_rgba(239,68,68,0.6)] hover:shadow-[0_0_50px_rgba(239,68,68,0.8)]'
-                            : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 shadow-[0_0_30px_rgba(6,182,212,0.6)] hover:shadow-[0_0_50px_rgba(6,182,212,0.8)]'
-                        }`}
-                >
-                    <Mic className="w-6 h-6" />
-                    {isListening ? "Stop Listening" : "Start Mic"}
-                </button>
-
-            </div>
+            <p className="text-text-secondary">
+              Real-time pitch detection and voice analysis
+            </p>
+          </div>
+          <IconButton
+            variant="secondary"
+            onClick={() => setShowSettings(!showSettings)}
+            className={showSettings ? 'bg-surface-4' : ''}
+          >
+            <Settings2 className="w-5 h-5" />
+          </IconButton>
         </div>
-    )
+      </BlurFade>
+
+      {/* Settings Panel (Collapsible) */}
+      <motion.div
+        initial={false}
+        animate={{ height: showSettings ? 'auto' : 0, opacity: showSettings ? 1 : 0 }}
+        className="overflow-hidden"
+      >
+        <BlurFade delay={0.1}>
+          <Card variant="default" padding="md" className="mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+              {/* Device Selector */}
+              <div>
+                <Label>Input Device</Label>
+                <Select
+                  value={selectedDeviceId}
+                  onChange={(e) => {
+                    setSelectedDeviceId(e.target.value);
+                    if (isListening) stopListening();
+                  }}
+                >
+                  <option value="default">Default Microphone</option>
+                  {availableDevices.map(device => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                      {device.label || `Mic ${device.deviceId.slice(0, 5)}...`}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              {/* Gain Control */}
+              <div>
+                <Label className="flex justify-between">
+                  <span>Input Gain</span>
+                  <span className="text-secondary font-mono">{inputGain.toFixed(1)}x</span>
+                </Label>
+                <input
+                  type="range"
+                  min="0"
+                  max="5"
+                  step="0.1"
+                  value={inputGain}
+                  onChange={(e) => setInputGain(parseFloat(e.target.value))}
+                  className="w-full h-2 bg-surface-3 rounded-lg appearance-none cursor-pointer accent-secondary mt-2"
+                />
+              </div>
+
+              {/* Noise Gate Control */}
+              <div>
+                <Label className="flex justify-between">
+                  <span>Noise Gate</span>
+                  <span className="text-error font-mono">{noiseGateThreshold.toFixed(3)}</span>
+                </Label>
+                <input
+                  type="range"
+                  min="0"
+                  max="0.1"
+                  step="0.001"
+                  value={noiseGateThreshold}
+                  onChange={(e) => setNoiseGateThreshold(parseFloat(e.target.value))}
+                  className="w-full h-2 bg-surface-3 rounded-lg appearance-none cursor-pointer accent-error mt-2"
+                />
+              </div>
+            </div>
+          </Card>
+        </BlurFade>
+      </motion.div>
+
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Pitch Display Card */}
+        <BlurFade delay={0.1}>
+          <Card
+            variant="glass"
+            padding="lg"
+            className="relative overflow-hidden flex flex-col items-center justify-center min-h-[400px]"
+          >
+            {/* Border beam effect when active */}
+            {isActive && <BorderBeam size={400} duration={8} />}
+
+            {/* Note Display */}
+            <div className="text-center mb-8">
+              <p className="text-text-muted text-sm font-medium uppercase tracking-wider mb-3">
+                Current Note
+              </p>
+              <motion.div
+                key={audioData.note}
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className={cn(
+                  'text-8xl lg:text-9xl font-bold tracking-tight',
+                  isActive ? audioData.voiceTypeColor : 'text-text-dim'
+                )}
+              >
+                {audioData.note}
+              </motion.div>
+              <div className="mt-3 text-xl font-mono text-text-secondary">
+                {isActive ? (
+                  <>
+                    <NumberTicker value={audioData.frequency} decimalPlaces={1} className="text-white" />
+                    <span className="text-text-muted ml-1">Hz</span>
+                  </>
+                ) : (
+                  <span className="text-text-dim">-- Hz</span>
+                )}
+              </div>
+            </div>
+
+            {/* Cents Deviation Meter */}
+            <div className="w-full max-w-xs">
+              <div className="relative h-2 bg-surface-3 rounded-full overflow-hidden">
+                {/* Center line */}
+                <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white/30 z-10 -translate-x-1/2" />
+                {/* Indicator */}
+                {isActive && (
+                  <motion.div
+                    className={cn('h-full w-3 rounded-full', centsColor)}
+                    initial={{ left: '50%' }}
+                    animate={{ left: `${centsPosition}%` }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                    style={{ position: 'absolute', transform: 'translateX(-50%)' }}
+                  />
+                )}
+              </div>
+
+              {/* Scale markers */}
+              <div className="flex justify-between mt-2 text-xs text-text-dim font-mono">
+                <span>-50</span>
+                <span>-25</span>
+                <span className="text-text-secondary">0</span>
+                <span>+25</span>
+                <span>+50</span>
+              </div>
+
+              {/* Cents value */}
+              <p className="text-center mt-3 text-sm text-text-secondary">
+                {isActive ? (
+                  <span className={cn(
+                    Math.abs(audioData.cents) < 10 ? 'text-success' :
+                      audioData.cents < 0 ? 'text-info' : 'text-error'
+                  )}>
+                    {audioData.cents > 0 ? '+' : ''}{audioData.cents} cents
+                  </span>
+                ) : (
+                  <span className="text-text-dim">-- cents</span>
+                )}
+              </p>
+            </div>
+          </Card>
+        </BlurFade>
+
+        {/* Stats & Visualizers Column */}
+        <div className="flex flex-col gap-6">
+          {/* Stats Grid */}
+          <BlurFade delay={0.2}>
+            <div className="grid grid-cols-2 gap-4">
+              <StatCard
+                label="Voice Type"
+                value={isActive ? audioData.voiceType : '--'}
+                icon={<Activity className="w-5 h-5" />}
+                className={cn(isActive && 'border-primary/30')}
+              />
+              <StatCard
+                label="Estimated Key"
+                value={isActive ? audioData.estimatedKey : '--'}
+                icon={<Music className="w-5 h-5" />}
+                className={cn(isActive && 'border-secondary/30')}
+              />
+            </div>
+          </BlurFade>
+
+          {/* Vibrato Meter */}
+          <BlurFade delay={0.3}>
+            <Card variant="default" padding="md">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-text-muted text-sm font-medium uppercase tracking-wider mb-1">
+                    Vibrato
+                  </p>
+                  <div className="flex items-baseline gap-2">
+                    <span className={cn(
+                      'text-3xl font-bold',
+                      audioData.vibrato?.isVibrato ? 'text-success' : 'text-text-dim'
+                    )}>
+                      {audioData.vibrato?.isVibrato ? audioData.vibrato.rate : '--'}
+                    </span>
+                    <span className="text-text-muted">Hz</span>
+                  </div>
+                  <div className="flex items-center gap-4 mt-2">
+                    <span className="text-xs text-text-muted">
+                      Depth: {audioData.vibrato?.isVibrato ? `${audioData.vibrato.depth} cents` : '--'}
+                    </span>
+                    {audioData.vibrato?.isVibrato && (
+                      <Badge
+                        variant={
+                          audioData.vibrato.quality === 'Excellent' ? 'success' :
+                            audioData.vibrato.quality === 'Good' ? 'primary' : 'warning'
+                        }
+                        size="sm"
+                      >
+                        {audioData.vibrato.quality}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* Vibrato Graph */}
+                <div className="w-48 h-16 rounded-lg overflow-hidden bg-surface-2 border border-border-subtle">
+                  <VibratoGraph
+                    pitch={audioData.exactMidi}
+                    isActive={audioData.frequency > 50}
+                  />
+                </div>
+              </div>
+            </Card>
+          </BlurFade>
+
+          {/* Frequency Visualizer */}
+          <BlurFade delay={0.4}>
+            <Card variant="default" padding="sm" className="flex-1 min-h-[180px]">
+              <div className="flex items-center justify-between px-2 py-1 mb-2">
+                <div className="flex items-center gap-2">
+                  <Waves className="w-4 h-4 text-text-muted" />
+                  <span className="text-sm text-text-muted">Frequency Spectrum</span>
+                </div>
+              </div>
+              <div className="h-[140px] rounded-lg overflow-hidden">
+                <Visualizer data={freqData} />
+              </div>
+            </Card>
+          </BlurFade>
+        </div>
+      </div>
+
+      {/* Start/Stop Button */}
+      <BlurFade delay={0.5}>
+        <div className="flex justify-center mt-8">
+          <Button
+            variant={isListening ? 'danger' : 'primary'}
+            size="lg"
+            onClick={isListening ? stopListening : startMic}
+            leftIcon={isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            className={cn(
+              'px-8 py-6 text-lg',
+              isListening
+                ? 'bg-gradient-to-r from-error to-accent shadow-[0_0_30px_rgba(239,68,68,0.4)]'
+                : 'shadow-[0_0_30px_rgba(188,19,254,0.4)]'
+            )}
+          >
+            {isListening ? 'Stop Listening' : 'Start Microphone'}
+          </Button>
+        </div>
+      </BlurFade>
+
+      {/* Footer hint */}
+      <BlurFade delay={0.6}>
+        <p className="text-center text-text-dim text-sm mt-6">
+          {isListening
+            ? 'Listening... Sing or play an instrument to see analysis'
+            : 'Click the button above to start real-time pitch detection'}
+        </p>
+      </BlurFade>
+    </PageContainer>
+  );
 }
