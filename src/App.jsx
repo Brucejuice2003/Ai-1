@@ -10,8 +10,15 @@ import PricingScreen from './components/PricingScreen';
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'keyfinder'
-  const { user, loading, logout, updatePlan } = useAuth();
+  // DEV MODE: Auth and subscription checks disabled for testing
+  // const { user, loading, logout, updatePlan } = useAuth();
 
+  // Mock user with premium access for testing
+  const user = { email: 'dev@test.com', plan: 'premium', name: 'Developer' };
+  const loading = false;
+  const logout = () => console.log('Logout disabled in dev mode');
+
+  /* ORIGINAL AUTH CHECKS - DISABLED FOR TESTING
   if (loading) {
     return <div className="min-h-screen bg-black flex items-center justify-center"><div className="w-6 h-6 border-2 border-white/20 border-t-cyan-500 rounded-full animate-spin" /></div>;
   }
@@ -34,6 +41,7 @@ function App() {
       </div>
     );
   }
+  */
 
   return (
     <AudioProvider>
@@ -50,19 +58,17 @@ function App() {
 
         {/* User Profile / Logout (Top Right) */}
         <div className="fixed top-5 right-6 z-50 flex items-center gap-3">
-          {/* Plan Badge */}
-          {user.plan === 'premium' && (
-            <div className="bg-gradient-to-r from-neon-purple to-neon-pink text-[10px] font-bold px-2 py-0.5 rounded-full text-white shadow-lg shadow-purple-500/20 animate-pulse-slow pointer-events-auto cursor-default" title="Premium Active">
-              PRO
-            </div>
-          )}
+          {/* DEV MODE Badge */}
+          <div className="bg-gradient-to-r from-yellow-500 to-orange-500 text-[10px] font-bold px-2 py-0.5 rounded-full text-black shadow-lg pointer-events-auto cursor-default" title="Dev Mode - Auth Disabled">
+            DEV
+          </div>
 
           <button
             onClick={logout}
             className="group flex items-center gap-2 p-1.5 rounded-full hover:bg-white/10 transition-colors pointer-events-auto"
             title="Sign Out"
           >
-            <img src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} alt="Avatar" className="w-7 h-7 rounded-full border border-white/20" />
+            <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} alt="Avatar" className="w-7 h-7 rounded-full border border-white/20" />
           </button>
         </div>
 
@@ -77,35 +83,11 @@ function App() {
               transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }} // "Quart" ease for premium feel
               className="w-full h-full"
             >
+              {/* DEV MODE: All features unlocked */}
               {activeTab === 'dashboard' ? (
                 <Dashboard />
               ) : (
-                user.plan === 'premium' ? (
-                  <KeyFinderModule />
-                ) : (
-                  // Locked Feature Screen
-                  <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center pt-20">
-                    <div className="bg-white/5 border border-white/10 p-8 rounded-3xl max-w-md w-full backdrop-blur-md relative overflow-hidden group">
-                      <div className="absolute inset-0 bg-neon-purple/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-
-                      <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6">
-                        <Lock className="w-10 h-10 text-gray-400 group-hover:text-neon-purple transition-colors" />
-                      </div>
-
-                      <h2 className="text-2xl font-bold text-white mb-2">Pro Feature Locked</h2>
-                      <p className="text-gray-400 mb-8">
-                        The Key Finder & File Analysis tools are available exclusively for <span className="text-neon-purple font-bold">Pro Producer</span> members.
-                      </p>
-
-                      <button
-                        onClick={() => updatePlan(null)}
-                        className="w-full py-3 rounded-xl bg-gradient-to-r from-neon-purple to-neon-pink text-white font-bold shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all transform hover:scale-[1.02]"
-                      >
-                        Upgrade for $9.99
-                      </button>
-                    </div>
-                  </div>
-                )
+                <KeyFinderModule />
               )}
             </motion.div>
           </AnimatePresence>
