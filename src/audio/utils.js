@@ -261,9 +261,9 @@ export async function detectPitchRange(audioBuffer) {
             for (let j = 0; j < frame.length; j++) rms += frame[j] * frame[j];
             rms = Math.sqrt(rms / frame.length);
 
-            if (rms > 0.01) {
+            if (rms > 0.02) {
                 const frequency = yinPitch(frame, sampleRate);
-                if (frequency !== -1 && frequency > 60 && frequency < 1400) {
+                if (frequency !== -1 && frequency > 85 && frequency < 1400) {
                     const note = getNoteFromFrequency(frequency);
                     if (note) {
                         midiCounts[note.midi] = (midiCounts[note.midi] || 0) + 1;

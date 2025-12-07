@@ -23,7 +23,7 @@ export default function Dashboard() {
     return (
         <div className="min-h-screen text-white px-4 pt-24 pb-8 md:p-8 md:pt-28 flex flex-col items-center justify-center relative">
             {/* Background ambient light */}
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-900 rounded-full blur-[150px] opacity-20 pointer-events-none"></div>
+            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-900 rounded-full blur-[150px] opacity-20 pointer-events-none transition-all duration-[2000ms] ease-in-out animate-pulse"></div>
 
             <header className="z-10 mb-12 text-center">
                 <h1 className="text-5xl font-bold mb-2 neon-text tracking-tighter drop-shadow-[0_4px_12px_rgba(0,0,0,0.8)]">SINGERS DREAMS</h1>
@@ -35,7 +35,7 @@ export default function Dashboard() {
                 <div className="glass-panel p-8 flex flex-col items-center justify-center aspect-square md:aspect-auto hover:shadow-[0_0_40px_rgba(147,51,234,0.4)] transition-all duration-500 hover:scale-[1.02] hover:border-purple-400/50">
                     <div className="text-center mb-6">
                         <h2 className="text-gray-400 uppercase tracking-widest text-sm mb-2">Current Note</h2>
-                        <div className={`text-9xl font-bold transition-colors duration-200 ${audioData.voiceTypeColor}`}>
+                        <div className={`text-9xl font-bold transition-colors duration-700 ${audioData.voiceTypeColor}`}>
                             {audioData.note}
                         </div>
                         <div className="mt-2 text-xl font-mono text-gray-300">

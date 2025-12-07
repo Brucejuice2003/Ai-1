@@ -3,6 +3,7 @@ import { autoCorrelate, getNoteFromFrequency, getSpectralCentroid, detectBPM } f
 
 import { KeyFinder } from './KeyFinder'; // Kept for mic usage if any, or remove? Keeping for safety
 import { VibratoDetector } from './VibratoDetector';
+import { CrepeDetector } from './CrepeDetector';
 
 const AudioContextState = createContext(null);
 
@@ -32,6 +33,7 @@ export function AudioProvider({ children }) {
     // Audio Settings
     const [inputGain, setInputGain] = useState(1.0);
     const [noiseGateThreshold, setNoiseGateThreshold] = useState(0.01);
+    const [useCrepe, setUseCrepe] = useState(true);
 
     // Core Audio Refs
     const audioCtxRef = useRef(null);
@@ -42,6 +44,9 @@ export function AudioProvider({ children }) {
     const rafIdRef = useRef(null);
     const keyFinderRef = useRef(new KeyFinder());
     const vibratoRef = useRef(new VibratoDetector());
+    const crepeRef = useRef(null);
+    const crepeFreqRef = useRef(null); // Stores latest async freq from CREPE
+    const lastUiUpdateRef = useRef(0);
 
 
     // For visualizer
@@ -120,6 +125,13 @@ export function AudioProvider({ children }) {
         // Legacy reset
         keyFinderRef.current.reset();
         vibratoRef.current.reset();
+
+        // Initialize CREPE if enabled
+        if (useCrepe) {
+            crepeRef.current = new CrepeDetector(audioCtxRef.current, sourceRef.current.mediaStream, (freq) => {
+                crepeFreqRef.current = freq;
+            });
+        }
 
         updateLoop();
     };
@@ -200,22 +212,41 @@ export function AudioProvider({ children }) {
             vibratoRef.current.reset();
         }
 
+        // --- OVERRIDE WITH CREPE IF AVAILABLE ---
+        if (useCrepe && crepeFreqRef.current) {
+            // Trust CREPE more, but maybe apply simple smoothing?
+            // CREPE is usually very stable.
+            frequency = crepeFreqRef.current;
+
+            // Re-calculate note info based on CREPE freq
+            noteInfo = getNoteFromFrequency(frequency);
+
+            // Update vibrato with this better frequency
+            vibratoRef.current.update(frequency, Date.now() / 1000);
+
+            // Update stable freq for display
+            pitchBufferRef.current.stableFreq = frequency;
+        }
+
         // Only update UI if mic is active source OR if we want live feedback for file play (optional)
         // For file playback, we rely on the Static Analysis for Key/Type, but we can show Note/Freq live
         // if (sourceType === 'mic') ... logic? 
         // Let's allow live feedback for both.
 
-        if (noteInfo) {
-            setAudioData(prev => ({
-                ...prev,
-                frequency: Math.round(pitchBufferRef.current.stableFreq || frequency),
-                note: noteInfo.note,
-                cents: noteInfo.cents,
-                volume: Math.round(rms * 100),
-                targetFrequency: noteInfo.frequency
-            }));
-        } else {
-            // Decay
+        // Throttled UI Updates (every 50ms)
+        const now = Date.now();
+        if (now - lastUiUpdateRef.current > 50) {
+            if (noteInfo) {
+                setAudioData(prev => ({
+                    ...prev,
+                    frequency: Math.round(pitchBufferRef.current.stableFreq || frequency),
+                    note: noteInfo.note,
+                    cents: noteInfo.cents,
+                    volume: Math.round(rms * 100),
+                    targetFrequency: noteInfo.frequency
+                }));
+            }
+            lastUiUpdateRef.current = now;
         }
 
         rafIdRef.current = requestAnimationFrame(updateLoop);
@@ -235,7 +266,9 @@ export function AudioProvider({ children }) {
             inputGain,
             setInputGain,
             noiseGateThreshold,
-            setNoiseGateThreshold
+            setNoiseGateThreshold,
+            useCrepe,
+            setUseCrepe
         }}>
             {children}
         </AudioContextState.Provider>
