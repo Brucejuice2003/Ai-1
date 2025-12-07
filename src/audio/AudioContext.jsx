@@ -12,24 +12,33 @@ export function AudioProvider({ children }) {
     const [availableDevices, setAvailableDevices] = useState([]);
     const [selectedDeviceId, setSelectedDeviceId] = useState('default');
 
-    // Audio Settings
-    const [inputGain, setInputGain] = useState(1.0);
-    const [noiseGateThreshold, setNoiseGateThreshold] = useState(0.01);
-
+    // Audio Data State
     const [audioData, setAudioData] = useState({
         frequency: 0,
         note: '-',
         cents: 0,
+        exactMidi: null,
+        targetFrequency: 0,
         voiceType: 'Silence',
         voiceTypeColor: 'text-gray-500',
         volume: 0,
-        targetFrequency: 0,
-
+        estimatedKey: '--',
+        vibrato: { isVibrato: false, rate: 0, depth: 0, quality: '', color: '' },
+        bpm: 0,
+        pitchRange: null,
+        detectedVoiceTypes: []
     });
+
+    // Audio Settings
+    const [inputGain, setInputGain] = useState(1.0);
+    const [noiseGateThreshold, setNoiseGateThreshold] = useState(0.01);
+
+    // Core Audio Refs
     const audioCtxRef = useRef(null);
     const analyzerRef = useRef(null);
     const gainNodeRef = useRef(null);
     const sourceRef = useRef(null);
+
     const rafIdRef = useRef(null);
     const keyFinderRef = useRef(new KeyFinder());
     const vibratoRef = useRef(new VibratoDetector());
