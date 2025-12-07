@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Music, Search, AlertCircle, Play, Check, Settings, LogIn, Youtube, Lock, X, Wand2 } from 'lucide-react';
+import { Upload, Music, Search, AlertCircle, Play, Pause, Check, Settings, LogIn, Youtube, Lock, X, Wand2 } from 'lucide-react';
 import { useAudio } from '../audio/AudioContext';
 import { searchSongs, getRandomSuggestions } from '../services/SongKeyService';
 import { YouTubeService } from '../services/YouTubeService';
@@ -479,7 +479,18 @@ export default function KeyFinderModule() {
                                     {/* Key Card */}
                                     <div className="bg-gradient-to-br from-cyan-900/40 to-blue-900/40 p-5 rounded-2xl border border-cyan-500/30 shadow-lg shadow-cyan-900/20 backdrop-blur-sm group hover:scale-[1.02] transition-transform duration-300 flex flex-col justify-between h-32 relative overflow-hidden">
                                         <div className="absolute top-0 right-0 w-20 h-20 bg-cyan-400/10 rounded-full blur-xl -mr-10 -mt-10"></div>
-                                        <div className="text-cyan-400 text-[10px] uppercase font-bold tracking-wider z-10">Key</div>
+                                        <div className="flex justify-between items-center z-10">
+                                            <div className="text-cyan-400 text-[10px] uppercase font-bold tracking-wider">Key</div>
+                                            {fileResult.keyConfidence > 0 && (
+                                                <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                                    fileResult.keyConfidence >= 70 ? 'bg-green-500/20 text-green-400' :
+                                                    fileResult.keyConfidence >= 40 ? 'bg-yellow-500/20 text-yellow-400' :
+                                                    'bg-red-500/20 text-red-400'
+                                                }`}>
+                                                    {fileResult.keyConfidence}% confident
+                                                </div>
+                                            )}
+                                        </div>
                                         <div className="text-4xl font-black text-white drop-shadow-[0_0_15px_rgba(34,211,238,0.6)] z-10 tracking-tight">{fileResult.key}</div>
                                     </div>
 

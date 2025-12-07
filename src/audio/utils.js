@@ -83,34 +83,37 @@ export function autoCorrelate(buffer, sampleRate) {
 /**
  * YIN Pitch Detection Algorithm (The "Gold Standard")
  * Robust against noise and octave errors.
+ * Now includes Step 4: Parabolic Interpolation for sub-sample accuracy.
  */
 export function yinPitch(buffer, sampleRate) {
     const threshold = 0.15; // Standard YIN threshold
     const bufferSize = buffer.length;
-    const yinBuffer = new Float32Array(Math.floor(bufferSize / 2));
+    const halfBuffer = Math.floor(bufferSize / 2);
+    const yinBuffer = new Float32Array(halfBuffer);
 
     // Step 1: Difference Function
-    for (let tau = 0; tau < yinBuffer.length; tau++) {
+    for (let tau = 0; tau < halfBuffer; tau++) {
         yinBuffer[tau] = 0;
-        for (let i = 0; i < yinBuffer.length; i++) {
+        for (let i = 0; i < halfBuffer; i++) {
             const delta = buffer[i] - buffer[i + tau];
             yinBuffer[tau] += delta * delta;
         }
     }
 
-    // Step 2: CMNDF
+    // Step 2: Cumulative Mean Normalized Difference Function (CMNDF)
     yinBuffer[0] = 1;
     let runningSum = 0;
-    for (let tau = 1; tau < yinBuffer.length; tau++) {
+    for (let tau = 1; tau < halfBuffer; tau++) {
         runningSum += yinBuffer[tau];
         yinBuffer[tau] *= tau / runningSum;
     }
 
-    // Step 3: Absolute Threshold
+    // Step 3: Absolute Threshold - find first minimum below threshold
     let tauEstimate = -1;
-    for (let tau = 2; tau < yinBuffer.length; tau++) {
+    for (let tau = 2; tau < halfBuffer; tau++) {
         if (yinBuffer[tau] < threshold) {
-            while (tau + 1 < yinBuffer.length && yinBuffer[tau + 1] < yinBuffer[tau]) {
+            // Find the local minimum
+            while (tau + 1 < halfBuffer && yinBuffer[tau + 1] < yinBuffer[tau]) {
                 tau++;
             }
             tauEstimate = tau;
@@ -120,7 +123,177 @@ export function yinPitch(buffer, sampleRate) {
 
     if (tauEstimate === -1) return -1;
 
-    return sampleRate / tauEstimate;
+    // Step 4: Parabolic Interpolation for sub-sample accuracy
+    // This significantly improves frequency precision
+    let betterTau = tauEstimate;
+    if (tauEstimate > 0 && tauEstimate < halfBuffer - 1) {
+        const s0 = yinBuffer[tauEstimate - 1];
+        const s1 = yinBuffer[tauEstimate];
+        const s2 = yinBuffer[tauEstimate + 1];
+        // Parabolic interpolation: find vertex of parabola through 3 points
+        const adjustment = (s2 - s0) / (2 * (2 * s1 - s2 - s0));
+        if (Math.abs(adjustment) < 1) {
+            betterTau = tauEstimate + adjustment;
+        }
+    }
+
+    return sampleRate / betterTau;
+}
+
+/**
+ * Calculates onset strength envelope using spectral flux.
+ * Returns an array of onset strengths for each frame.
+ */
+function calculateOnsetEnvelope(channelData, sampleRate, frameSize = 1024, hopSize = 512) {
+  const numFrames = Math.floor((channelData.length - frameSize) / hopSize);
+  const onsetEnvelope = new Float32Array(numFrames);
+
+  let prevEnergy = 0;
+
+  for (let frame = 0; frame < numFrames; frame++) {
+    const start = frame * hopSize;
+
+    // Calculate frame energy (sum of squared samples)
+    let energy = 0;
+    for (let i = 0; i < frameSize; i++) {
+      energy += channelData[start + i] * channelData[start + i];
+    }
+    energy = Math.sqrt(energy / frameSize);
+
+    // Spectral flux: positive difference in energy (half-wave rectification)
+    const flux = Math.max(0, energy - prevEnergy);
+    onsetEnvelope[frame] = flux;
+    prevEnergy = energy;
+  }
+
+  // Normalize the envelope
+  let maxOnset = 0;
+  for (let i = 0; i < onsetEnvelope.length; i++) {
+    if (onsetEnvelope[i] > maxOnset) maxOnset = onsetEnvelope[i];
+  }
+  if (maxOnset > 0) {
+    for (let i = 0; i < onsetEnvelope.length; i++) {
+      onsetEnvelope[i] /= maxOnset;
+    }
+  }
+
+  return onsetEnvelope;
+}
+
+/**
+ * Finds tempo from onset envelope using autocorrelation.
+ * Returns BPM in the range 60-200 with harmonic validation.
+ */
+function findTempoFromOnsets(onsetEnvelope, hopSize, sampleRate) {
+  const minBPM = 60;
+  const maxBPM = 200;
+
+  // Convert BPM range to lag range (in onset frames)
+  const secondsPerFrame = hopSize / sampleRate;
+  const minLag = Math.floor(60 / (maxBPM * secondsPerFrame)); // ~200 BPM
+  const maxLag = Math.ceil(60 / (minBPM * secondsPerFrame));  // ~60 BPM
+
+  const n = onsetEnvelope.length;
+  if (n < maxLag * 2) return { bpm: 0, confidence: 0 };
+
+  // Compute autocorrelation for ALL lags we might need (including harmonics)
+  const extendedMaxLag = maxLag * 2; // Need double for harmonic checking
+  const correlation = new Float32Array(extendedMaxLag + 1);
+
+  for (let lag = minLag; lag <= extendedMaxLag && lag < n; lag++) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < n - lag; i++) {
+      sum += onsetEnvelope[i] * onsetEnvelope[i + lag];
+      count++;
+    }
+    correlation[lag] = count > 0 ? sum / count : 0;
+  }
+
+  // Find peaks in correlation within our BPM range
+  const peaks = [];
+  for (let lag = minLag + 1; lag < maxLag - 1; lag++) {
+    if (correlation[lag] > correlation[lag - 1] && correlation[lag] > correlation[lag + 1]) {
+      const lagBpm = 60 / (lag * secondsPerFrame);
+      peaks.push({
+        lag: lag,
+        bpm: lagBpm,
+        value: correlation[lag]
+      });
+    }
+  }
+
+  if (peaks.length === 0) return { bpm: 0, confidence: 0 };
+
+  // Sort by correlation value
+  peaks.sort((a, b) => b.value - a.value);
+
+  // Evaluate top candidates with harmonic checking
+  // For each candidate, check if double-tempo (half-lag) exists and is stronger
+  let bestCandidate = null;
+  let bestScore = -1;
+
+  for (const peak of peaks.slice(0, 5)) { // Check top 5 candidates
+    const halfLag = Math.round(peak.lag / 2);
+    const doubleLag = peak.lag * 2;
+
+    // Get correlation at harmonic positions
+    const halfCorr = halfLag >= minLag ? correlation[halfLag] || 0 : 0;
+    const doubleCorr = doubleLag < correlation.length ? correlation[doubleLag] || 0 : 0;
+
+    // Score: prefer tempos where the half-tempo (double BPM) also has correlation
+    // This helps distinguish 80 BPM from 160 BPM
+    let score = peak.value;
+
+    // If half-lag (double BPM) has good correlation, boost this candidate
+    // because it suggests we found a strong sub-beat
+    if (halfCorr > peak.value * 0.5) {
+      // The half-lag is also strong - prefer the faster tempo
+      const halfBpm = 60 / (halfLag * secondsPerFrame);
+      if (halfBpm >= minBPM && halfBpm <= maxBPM) {
+        // Use the faster tempo instead
+        score = halfCorr * 1.5; // Boost score
+        if (score > bestScore) {
+          bestScore = score;
+          bestCandidate = { lag: halfLag, bpm: halfBpm, value: halfCorr };
+        }
+        continue;
+      }
+    }
+
+    // Penalize if this looks like a half-time detection
+    // (if double-lag has similar or stronger correlation)
+    if (doubleCorr > peak.value * 0.8) {
+      score *= 0.7; // Penalize - likely detecting half-time
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = peak;
+    }
+  }
+
+  if (!bestCandidate) return { bpm: 0, confidence: 0 };
+
+  // Parabolic interpolation for sub-frame accuracy
+  let betterLag = bestCandidate.lag;
+  if (bestCandidate.lag > 1 && bestCandidate.lag < correlation.length - 1) {
+    const y0 = correlation[bestCandidate.lag - 1];
+    const y1 = correlation[bestCandidate.lag];
+    const y2 = correlation[bestCandidate.lag + 1];
+    const denom = 2 * (y0 - 2 * y1 + y2);
+    if (Math.abs(denom) > 0.0001) {
+      const adjustment = (y0 - y2) / denom;
+      if (Math.abs(adjustment) < 1) {
+        betterLag = bestCandidate.lag + adjustment;
+      }
+    }
+  }
+
+  // Convert lag to BPM
+  const bpm = 60 / (betterLag * secondsPerFrame);
+
+  return { bpm: Math.round(bpm), confidence: bestScore };
 }
 
 /**
@@ -143,98 +316,68 @@ export function getSpectralCentroid(frequencyData, sampleRate) {
 }
 
 /**
- * Detects BPM from an AudioBuffer using OfflineAudioContext (Background Thread).
- * Applies Low-Pass Filter to isolate Kick/Bass for superior accuracy.
+ * Detects BPM from an AudioBuffer using onset detection and autocorrelation.
+ * Uses OfflineAudioContext for background processing with bandpass filtering.
+ * Supports 60-200 BPM range with improved accuracy.
  */
 export async function detectBPM(audioBuffer) {
-    try {
-        // Create Offline Context to render audio in background
-        const offlineCtx = new OfflineAudioContext(1, audioBuffer.length, audioBuffer.sampleRate);
-        const source = offlineCtx.createBufferSource();
-        source.buffer = audioBuffer;
+  try {
+    const sampleRate = audioBuffer.sampleRate;
 
-        // Lowpass Filter to isolate Bass/Kick (The "Beat")
-        const filter = offlineCtx.createBiquadFilter();
-        filter.type = "lowpass";
-        filter.frequency.value = 150;
-        filter.Q.value = 1;
+    // Create Offline Context with bandpass filtering
+    const offlineCtx = new OfflineAudioContext(1, audioBuffer.length, sampleRate);
+    const source = offlineCtx.createBufferSource();
+    source.buffer = audioBuffer;
 
-        source.connect(filter);
-        filter.connect(offlineCtx.destination);
-        source.start(0);
+    // High-pass filter to remove rumble (30Hz)
+    const highPass = offlineCtx.createBiquadFilter();
+    highPass.type = "highpass";
+    highPass.frequency.value = 30;
+    highPass.Q.value = 0.7;
 
-        const renderedBuffer = await offlineCtx.startRendering();
-        const channelData = renderedBuffer.getChannelData(0);
-        const sampleRate = renderedBuffer.sampleRate;
+    // Low-pass filter to isolate bass/kick (200Hz)
+    const lowPass = offlineCtx.createBiquadFilter();
+    lowPass.type = "lowpass";
+    lowPass.frequency.value = 200;
+    lowPass.Q.value = 0.7;
 
-        // 1. Calculate volume peaks
-        const windowSize = Math.floor(sampleRate * 0.05);
-        let peaks = [];
+    // Chain: source -> highpass -> lowpass -> destination
+    source.connect(highPass);
+    highPass.connect(lowPass);
+    lowPass.connect(offlineCtx.destination);
+    source.start(0);
 
-        for (let i = 0; i < channelData.length; i += windowSize) {
-            let max = 0;
-            for (let j = 0; j < windowSize && i + j < channelData.length; j++) {
-                const vol = Math.abs(channelData[i + j]);
-                if (vol > max) max = vol;
-            }
-            peaks.push(max);
-        }
+    const renderedBuffer = await offlineCtx.startRendering();
+    const channelData = renderedBuffer.getChannelData(0);
 
-        // 2. Find significantly high peaks (beats) using dynamic threshold
-        // Instead of sorting all, find max peak first
-        let maxPeak = 0;
-        for (let p of peaks) if (p > maxPeak) maxPeak = p;
+    // Parameters for onset detection
+    const frameSize = 1024;  // ~23ms at 44.1kHz
+    const hopSize = 512;     // 50% overlap
 
-        const threshold = maxPeak * 0.5; // 50% of max volume seems safer than sorting 30% percentile
+    // Step 1: Calculate onset envelope
+    const onsetEnvelope = calculateOnsetEnvelope(channelData, sampleRate, frameSize, hopSize);
 
-        const beatIndices = [];
-        for (let i = 0; i < peaks.length; i++) {
-            if (peaks[i] > threshold) {
-                if (beatIndices.length === 0 || i - beatIndices[beatIndices.length - 1] > 4) {
-                    beatIndices.push(i);
-                }
-            }
-        }
-
-        // 3. Calculate intervals and convert to immediate BPMs
-        const rawBpms = [];
-        for (let i = 1; i < beatIndices.length; i++) {
-            const intervalUnits = beatIndices[i] - beatIndices[i - 1];
-            // intervalUnits is in windows of (sampleRate * 0.05)
-            const seconds = intervalUnits * 0.05;
-            if (seconds === 0) continue;
-
-            let bpm = 60 / seconds;
-            // Best fit range for general music 70-170
-            while (bpm < 70) bpm *= 2;
-            while (bpm > 170) bpm /= 2;
-            rawBpms.push(bpm);
-        }
-
-        // 4. Histogram of BPMs
-        const bpmCounts = {};
-        rawBpms.forEach(b => {
-            const rounded = Math.round(b);
-            bpmCounts[rounded] = (bpmCounts[rounded] || 0) + 1;
-            bpmCounts[rounded - 1] = (bpmCounts[rounded - 1] || 0) + 0.5;
-            bpmCounts[rounded + 1] = (bpmCounts[rounded + 1] || 0) + 0.5;
-        });
-
-        let maxCount = 0;
-        let bestBpm = 0;
-        for (const b in bpmCounts) {
-            if (bpmCounts[b] > maxCount) {
-                maxCount = bpmCounts[b];
-                bestBpm = Number(b);
-            }
-        }
-
-        return bestBpm || 0;
-
-    } catch (e) {
-        console.error("BPM Detection failed", e);
-        return 0;
+    if (onsetEnvelope.length < 100) {
+      console.warn("Audio too short for reliable BPM detection");
+      return 0;
     }
+
+    // Step 2: Find tempo using autocorrelation
+    const result = findTempoFromOnsets(onsetEnvelope, hopSize, sampleRate);
+
+    if (result.bpm === 0) {
+      // Fallback: try with different parameters
+      const fallbackEnvelope = calculateOnsetEnvelope(channelData, sampleRate, 2048, 1024);
+      const fallbackResult = findTempoFromOnsets(fallbackEnvelope, 1024, sampleRate);
+      return fallbackResult.bpm;
+    }
+
+    return result.bpm;
+
+  } catch (e) {
+    console.error("BPM Detection failed", e);
+    return 0;
+  }
 }
 
 /**
